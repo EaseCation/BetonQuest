@@ -658,6 +658,19 @@
         </executions>
       </plugin>
       <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <configuration>
+          <excludes>
+            <exclude>**/jobsreborn/*.java</exclude>
+            <exclude>**/protocollib/FreezeEvent.java</exclude>
+            <exclude>**/protocollib/conversation/MenuConvIO.java</exclude>
+            <exclude>**/protocollib/wrappers/*.java</exclude>
+            <exclude>**/notify/TotemNotifyIO.java</exclude>
+          </excludes>
+        </configuration>
+      </plugin>
+      <plugin>
         <groupId>org.pitest</groupId>
         <artifactId>pitest-maven</artifactId>
         <configuration>

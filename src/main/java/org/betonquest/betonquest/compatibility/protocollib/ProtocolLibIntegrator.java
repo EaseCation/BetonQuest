@@ -2,7 +2,6 @@ package org.betonquest.betonquest.compatibility.protocollib;
 
 import org.betonquest.betonquest.BetonQuest;
 import org.betonquest.betonquest.compatibility.Integrator;
-import org.betonquest.betonquest.compatibility.protocollib.conversation.MenuConvIO;
 import org.betonquest.betonquest.compatibility.protocollib.conversation.PacketInterceptor;
 import org.betonquest.betonquest.exceptions.HookException;
 import org.betonquest.betonquest.exceptions.UnsupportedVersionException;
@@ -30,9 +29,7 @@ public class ProtocolLibIntegrator implements Integrator {
             throw new UnsupportedVersionException(protocolLib, "5.0.0-SNAPSHOT-636");
         }
 
-        plugin.registerConversationIO("menu", MenuConvIO.class);
         plugin.registerInterceptor("packet", PacketInterceptor.class);
-        plugin.registerEvents("freeze", FreezeEvent.class);
     }
 
     @Override

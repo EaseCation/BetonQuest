@@ -935,6 +935,7 @@ public class QuestCommand implements CommandExecutor, SimpleTabCompleter {
     private void handleTags(final CommandSender sender, final String... args) {
         final Profile profile = getTargetProfile(sender, args);
         if (profile == null) {
+            sender.sendMessage("§c[BQ-DEBUG] getTargetProfile returned null");
             return;
         }
         final PlayerData playerData;
@@ -944,6 +945,10 @@ public class QuestCommand implements CommandExecutor, SimpleTabCompleter {
             log.debug("Profile is offline, loading his data");
             playerData = new PlayerData(profile);
         }
+        final List<String> allTags = playerData.getTags();
+        final String debugLine = "[BQ-TAG-DEBUG] profile=" + profile + " tags_count=" + allTags.size() + " tags=" + allTags;
+        Bukkit.getLogger().info(debugLine);
+        sender.sendMessage("§e" + debugLine);
         // if there are no arguments then list player's tags
         if (args.length < 3 || "list".equalsIgnoreCase(args[2]) || "l".equalsIgnoreCase(args[2])) {
             log.debug("Listing tags");
@@ -962,13 +967,13 @@ public class QuestCommand implements CommandExecutor, SimpleTabCompleter {
             return;
         }
         // if there are arguments, handle them
+        final String rawInput = args[3];
         switch (args[2].toLowerCase(Locale.ROOT)) {
             case "add":
             case "a":
                 // add the tag (use raw input, no package resolution needed for new tags)
-                final String tagToAdd = args[3];
-                log.debug("Adding tag " + tagToAdd + " for " + profile);
-                playerData.addTag(tagToAdd);
+                sender.sendMessage("§e[BQ-DEBUG] ADD raw=" + rawInput);
+                playerData.addTag(rawInput);
                 sendMessage(sender, "tag_added");
                 break;
             case "remove":
@@ -977,8 +982,9 @@ public class QuestCommand implements CommandExecutor, SimpleTabCompleter {
             case "r":
             case "d":
                 // remove the tag with fuzzy package prefix matching
-                final String tagToRemove = resolveTag(playerData.getTags(), args[3]);
-                log.debug("Removing tag " + tagToRemove + " from " + profile);
+                final String tagToRemove = resolveTag(playerData.getTags(), rawInput);
+                Bukkit.getLogger().info("[BQ-TAG-DEBUG] DELETE raw=" + rawInput + " resolved=" + tagToRemove);
+                sender.sendMessage("§e[BQ-TAG-DEBUG] DELETE raw=" + rawInput + " resolved=" + tagToRemove);
                 playerData.removeTag(tagToRemove);
                 sendMessage(sender, "tag_removed");
                 break;

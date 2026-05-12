@@ -33,7 +33,6 @@ import org.betonquest.betonquest.commands.JournalCommand;
 import org.betonquest.betonquest.commands.LangCommand;
 import org.betonquest.betonquest.commands.QuestCommand;
 import org.betonquest.betonquest.compatibility.Compatibility;
-import org.betonquest.betonquest.compatibility.protocollib.FreezeEvent;
 import org.betonquest.betonquest.config.Config;
 import org.betonquest.betonquest.config.QuestCanceler;
 import org.betonquest.betonquest.conversation.AnswerFilter;
@@ -106,7 +105,6 @@ import org.betonquest.betonquest.notify.SoundIO;
 import org.betonquest.betonquest.notify.SubTitleNotifyIO;
 import org.betonquest.betonquest.notify.SuppressNotifyIO;
 import org.betonquest.betonquest.notify.TitleNotifyIO;
-import org.betonquest.betonquest.notify.TotemNotifyIO;
 import org.betonquest.betonquest.quest.legacy.LegacyTypeFactory;
 import org.betonquest.betonquest.quest.registry.CoreQuestTypes;
 import org.betonquest.betonquest.quest.registry.QuestRegistry;
@@ -544,7 +542,6 @@ public class BetonQuest extends JavaPlugin {
         registerNotifyIO("actionbar", ActionBarNotifyIO.class);
         registerNotifyIO("bossbar", BossBarNotifyIO.class);
         registerNotifyIO("title", TitleNotifyIO.class);
-        registerNotifyIO("totem", TotemNotifyIO.class);
         registerNotifyIO("subtitle", SubTitleNotifyIO.class);
         registerNotifyIO("sound", SoundIO.class);
 
@@ -728,7 +725,6 @@ public class BetonQuest extends JavaPlugin {
         if (rpgMenu != null) {
             rpgMenu.onDisable();
         }
-        FreezeEvent.cleanup();
     }
 
     /**

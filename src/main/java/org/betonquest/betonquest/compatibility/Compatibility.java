@@ -15,7 +15,6 @@ import org.betonquest.betonquest.compatibility.heroes.HeroesIntegrator;
 import org.betonquest.betonquest.compatibility.holograms.HologramProvider;
 import org.betonquest.betonquest.compatibility.holograms.decentholograms.DecentHologramsIntegrator;
 import org.betonquest.betonquest.compatibility.holograms.holographicdisplays.HolographicDisplaysIntegrator;
-import org.betonquest.betonquest.compatibility.jobsreborn.JobsRebornIntegrator;
 import org.betonquest.betonquest.compatibility.luckperms.LuckPermsIntegrator;
 import org.betonquest.betonquest.compatibility.magic.MagicIntegrator;
 import org.betonquest.betonquest.compatibility.mcmmo.McMMOIntegrator;
@@ -251,7 +250,6 @@ public class Compatibility implements Listener {
         register("ProtocolLib", ProtocolLibIntegrator.class);
         register("Brewery", BreweryIntegrator.class);
         register("BreweryX", BreweryIntegrator.class);
-        register("Jobs", JobsRebornIntegrator.class);
         register("LuckPerms", LuckPermsIntegrator.class);
         register("AuraSkills", AuraSkillsIntegrator.class);
         register("DecentHolograms", DecentHologramsIntegrator.class);
