@@ -67,6 +67,7 @@ import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.Date;
 import java.util.HashMap;
@@ -946,7 +947,7 @@ public class QuestCommand implements CommandExecutor, SimpleTabCompleter {
         // if there are no arguments then list player's tags
         if (args.length < 3 || "list".equalsIgnoreCase(args[2]) || "l".equalsIgnoreCase(args[2])) {
             log.debug("Listing tags");
-            final Predicate<String> shouldDisplay = createListFilter(args, 3, Function.identity());
+            final Predicate<String> shouldDisplay = createTagListFilter(args, 3);
             sendMessage(sender, "player_tags");
             playerData.getTags().stream()
                     .filter(shouldDisplay)
@@ -960,15 +961,14 @@ public class QuestCommand implements CommandExecutor, SimpleTabCompleter {
             sendMessage(sender, "specify_tag");
             return;
         }
-        final String tag = args[3];
         // if there are arguments, handle them
         switch (args[2].toLowerCase(Locale.ROOT)) {
             case "add":
             case "a":
-                // add the tag
-                log.debug(
-                        "Adding tag " + tag + " for " + profile);
-                playerData.addTag(tag);
+                // add the tag (use raw input, no package resolution needed for new tags)
+                final String tagToAdd = args[3];
+                log.debug("Adding tag " + tagToAdd + " for " + profile);
+                playerData.addTag(tagToAdd);
                 sendMessage(sender, "tag_added");
                 break;
             case "remove":
@@ -976,10 +976,10 @@ public class QuestCommand implements CommandExecutor, SimpleTabCompleter {
             case "del":
             case "r":
             case "d":
-                // remove the tag
-                log.debug(
-                        "Removing tag " + tag + " from " + profile);
-                playerData.removeTag(tag);
+                // remove the tag with fuzzy package prefix matching
+                final String tagToRemove = resolveTag(playerData.getTags(), args[3]);
+                log.debug("Removing tag " + tagToRemove + " from " + profile);
+                playerData.removeTag(tagToRemove);
                 sendMessage(sender, "tag_removed");
                 break;
             default:
@@ -1019,14 +1019,14 @@ public class QuestCommand implements CommandExecutor, SimpleTabCompleter {
             sendMessage(sender, "specify_tag");
             return;
         }
-        final String tag = args[2];
         // if there are arguments, handle them
         switch (args[1].toLowerCase(Locale.ROOT)) {
             case "add":
             case "a":
-                // add the tag
-                log.debug("Adding global tag " + tag);
-                data.addTag(tag);
+                // add the tag (use raw input)
+                final String gTagToAdd = args[2];
+                log.debug("Adding global tag " + gTagToAdd);
+                data.addTag(gTagToAdd);
                 sendMessage(sender, "tag_added");
                 break;
             case "remove":
@@ -1034,9 +1034,10 @@ public class QuestCommand implements CommandExecutor, SimpleTabCompleter {
             case "del":
             case "r":
             case "d":
-                // remove the tag
-                log.debug("Removing global tag " + tag);
-                data.removeTag(tag);
+                // remove the tag with fuzzy package prefix matching
+                final String gTagToRemove = resolveTag(data.getTags(), args[2]);
+                log.debug("Removing global tag " + gTagToRemove);
+                data.removeTag(gTagToRemove);
                 sendMessage(sender, "tag_removed");
                 break;
             default:
@@ -1917,6 +1918,28 @@ public class QuestCommand implements CommandExecutor, SimpleTabCompleter {
             }
             sender.sendMessage(message);
         }
+    }
+
+    private String resolveTag(final Collection<String> existingTags, final String rawTag) {
+        if (rawTag.contains(".")) {
+            return rawTag;
+        }
+        return existingTags.stream()
+                .filter(tag -> tag.endsWith("." + rawTag))
+                .findFirst()
+                .orElse(rawTag);
+    }
+
+    private Predicate<String> createTagListFilter(final String[] args, final int filterIndex) {
+        if (args.length <= filterIndex) {
+            return tag -> true;
+        }
+        final String filter = args[filterIndex];
+        if (filter.contains(".")) {
+            return tag -> tag.regionMatches(true, 0, filter, 0, filter.length());
+        }
+        return tag -> tag.endsWith("." + filter) || tag.equals(filter)
+                || tag.regionMatches(true, 0, filter, 0, filter.length());
     }
 
     private <T> Predicate<T> createListFilter(final String[] args, final int filterIndex, final Function<T, String> getId) {
