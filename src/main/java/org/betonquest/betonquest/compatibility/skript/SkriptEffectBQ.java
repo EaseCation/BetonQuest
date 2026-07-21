@@ -50,12 +50,19 @@ public class SkriptEffectBQ extends Effect {
 
     @Override
     protected void execute(final Event event) {
+        // Resolve Skript expressions on the current tick. Local variables may become
+        // <none> after the effect returns; the next-tick task must use these snapshots.
+        final String eventID = this.event.getSingle(event);
+        final Player target = this.player.getSingle(event);
+        if (eventID == null || target == null) {
+            log.warn("Cannot fire BetonQuest event from Skript: event id or player is <none>");
+            return;
+        }
         new BukkitRunnable() {
             @Override
             public void run() {
-                final String eventID = SkriptEffectBQ.this.event.getSingle(event);
                 try {
-                    BetonQuest.event(PlayerConverter.getID(player.getSingle(event)), new EventID(null, eventID));
+                    BetonQuest.event(PlayerConverter.getID(target), new EventID(null, eventID));
                 } catch (final ObjectNotFoundException e) {
                     log.warn("Error when running Skript event - could not load '" + eventID + "' event: " + e.getMessage(), e);
                 }
