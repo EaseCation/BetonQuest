@@ -65,3 +65,7 @@ deploy-key
 # Python Virtual Environments
 venv/
 .venv/
+
+# Gradle (GeyserWorkspace composite build)
+.gradle/
+build/
