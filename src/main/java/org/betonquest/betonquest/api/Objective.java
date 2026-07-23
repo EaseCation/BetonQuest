@@ -201,7 +201,9 @@ public abstract class Objective {
      */
     public final void completeObjective(final Profile profile) {
         completeObjectiveForPlayer(profile);
-        final PlayerData playerData = BetonQuest.getInstance().getPlayerData(profile);
+        final PlayerData playerData = profile.getOnlineProfile().isPresent()
+                ? BetonQuest.getInstance().getPlayerData(profile)
+                : BetonQuest.getInstance().getOfflinePlayerData(profile);
         playerData.removeRawObjective((ObjectiveID) instruction.getID());
         if (persistent) {
             playerData.addNewRawObjective((ObjectiveID) instruction.getID());
@@ -210,13 +212,47 @@ public abstract class Objective {
         log.debug(instruction.getPackage(),
                 "Objective \"" + instruction.getID().getFullID() + "\" has been completed for "
                         + profile + ", firing events.");
-        // fire all events
-        for (final EventID event : events) {
-            BetonQuest.event(profile, event);
-        }
+        fireCompletionEvents(profile);
         log.debug(instruction.getPackage(),
                 "Firing events in objective \"" + instruction.getID().getFullID() + "\" for "
                         + profile + " finished");
+    }
+
+    /**
+     * Fires completion events without changing objective state.
+     *
+     * <p>Reliable external-event consumers use this before their authoritative reward mutation. If the server crashes,
+     * the still-active completed instruction row causes the same events to be evaluated again; asset-aware events are
+     * deduplicated by their deterministic Authority operation.</p>
+     */
+    public final void fireAssetSequenceCompletionEvents(final Profile profile) throws QuestRuntimeException {
+        for (final EventID event : events) BetonQuest.durableEvent(profile, event);
+    }
+
+    private void fireCompletionEvents(final Profile profile) {
+        for (final EventID event : events) {
+            BetonQuest.event(profile, event);
+        }
+    }
+
+    /**
+     * Finalizes an objective only after its authoritative asset rewards have committed.
+     *
+     * @param profile profile owning the objective
+     * @param assetSequence source PlayerAsset sequence
+     * @param completedInstructions exact completed instruction persisted with the sequence cursor
+     * @return whether this call finalized the durable objective row
+     */
+    public final boolean finalizeAssetSequenceCompletion(final Profile profile, final long assetSequence,
+                                                         final String completedInstructions) {
+        final String persistentInstructions = persistent ? getDefaultDataInstruction(profile) : null;
+        final boolean finalized = BetonQuest.getInstance().getDB().finalizeObjectiveCompletion(
+                profile.getProfileUUID().toString(), getLabel(), assetSequence,
+                completedInstructions, persistentInstructions);
+        if (!finalized) return false;
+        if (containsPlayer(profile)) completeObjectiveForPlayer(profile);
+        if (persistent) createObjectiveForPlayer(profile, persistentInstructions);
+        return true;
     }
 
     /**
@@ -577,6 +613,11 @@ public abstract class Objective {
             final Saver saver = BetonQuest.getInstance().getSaver();
             saver.add(new Saver.Record(UpdateType.REMOVE_OBJECTIVES, profile.getProfileUUID().toString(), objID));
             saver.add(new Saver.Record(UpdateType.ADD_OBJECTIVES, profile.getProfileUUID().toString(), objID, toString()));
+            notifyDataUpdate();
+        }
+
+        /** Publishes an already persisted data change without queueing another database write. */
+        protected final void notifyDataUpdate() {
             final QuestDataUpdateEvent event = new QuestDataUpdateEvent(profile, objID, toString());
             final Server server = BetonQuest.getInstance().getServer();
             server.getScheduler().runTask(BetonQuest.getInstance(), () -> server.getPluginManager().callEvent(event));

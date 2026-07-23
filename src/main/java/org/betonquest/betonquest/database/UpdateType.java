@@ -111,6 +111,7 @@ public enum UpdateType {
     DROP_PLAYER(prefix -> "DROP TABLE " + prefix + "player"),
     DROP_PLAYER_PROFILE(prefix -> "DROP TABLE " + prefix + "player_profile"),
     DROP_PROFILE(prefix -> "DROP TABLE " + prefix + "profile"),
+    DROP_ASSET_SEQUENCE_CURSOR(prefix -> "DROP TABLE " + prefix + "asset_sequence_cursor"),
     DROP_MIRGATION(prefix -> "DROP TABLE " + prefix + "migration"),
 
     DROP_GLOBAL_TAGS(prefix -> "DROP TABLE " + prefix + "global_tags"),
@@ -124,6 +125,8 @@ public enum UpdateType {
     INSERT_PLAYER(prefix -> "INSERT INTO " + prefix + "player (playerID, active_profile, language, conversation) VALUES (?,?,?,?);"),
     INSERT_PROFILE(prefix -> "INSERT INTO " + prefix + "profile (profileID) VALUES (?);"),
     INSERT_PLAYER_PROFILE(prefix -> "INSERT INTO " + prefix + "player_profile (playerID, profileID, name) VALUES (?,?,?);"),
+    INSERT_ASSET_SEQUENCE_CURSOR(prefix -> "INSERT INTO " + prefix
+            + "asset_sequence_cursor (profileID, objective, asset_sequence) VALUES (?,?,?);"),
 
     INSERT_GLOBAL_TAG(prefix -> "INSERT INTO " + prefix + "global_tags (tag) VALUES (?)"),
     INSERT_GLOBAL_POINT(prefix -> "INSERT INTO " + prefix + "global_points (category,count) VALUES (?,?)"),

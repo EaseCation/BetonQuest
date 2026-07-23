@@ -58,6 +58,7 @@ import org.betonquest.betonquest.database.PlayerData;
 import org.betonquest.betonquest.database.SQLite;
 import org.betonquest.betonquest.database.Saver;
 import org.betonquest.betonquest.exceptions.InstructionParseException;
+import org.betonquest.betonquest.exceptions.QuestRuntimeException;
 import org.betonquest.betonquest.id.ConditionID;
 import org.betonquest.betonquest.id.ConversationID;
 import org.betonquest.betonquest.id.EventID;
@@ -278,6 +279,12 @@ public class BetonQuest extends JavaPlugin {
      */
     public static boolean event(@Nullable final Profile profile, final EventID eventID) {
         return instance.questRegistry.events().execute(profile, eventID);
+    }
+
+    /** Executes a reliable completion event without swallowing failures. */
+    public static void durableEvent(@Nullable final Profile profile, final EventID eventID)
+            throws QuestRuntimeException {
+        instance.questRegistry.events().executeDurable(profile, eventID);
     }
 
     /**

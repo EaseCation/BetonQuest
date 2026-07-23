@@ -2,6 +2,7 @@ package org.betonquest.betonquest.compatibility.vault.event;
 
 import net.milkbowl.vault.economy.Economy;
 import org.betonquest.betonquest.api.profiles.Profile;
+import org.betonquest.betonquest.api.asset.AssetRewardContexts;
 import org.betonquest.betonquest.api.quest.event.Event;
 import org.betonquest.betonquest.exceptions.QuestRuntimeException;
 import org.betonquest.betonquest.instruction.variable.VariableNumber;
@@ -10,6 +11,7 @@ import org.bukkit.OfflinePlayer;
 import org.jetbrains.annotations.Nullable;
 
 import java.text.DecimalFormat;
+import java.math.BigDecimal;
 
 /**
  * Modifies player's balance.
@@ -62,6 +64,21 @@ public class MoneyEvent implements Event {
 
     @Override
     public void execute(final Profile profile) throws QuestRuntimeException {
+        final var rewardContext = AssetRewardContexts.current(profile);
+        if (rewardContext.isPresent()) {
+            final BigDecimal current = rewardContext.get().balance();
+            final BigDecimal configured;
+            try {
+                configured = new BigDecimal(amount.getValue(profile).toString());
+            } catch (NumberFormatException error) {
+                throw new QuestRuntimeException("Money reward is not an exact decimal", error);
+            }
+            final BigDecimal target = multi ? current.multiply(configured) : current.add(configured);
+            final BigDecimal difference = target.subtract(current);
+            if (difference.signum() != 0) rewardContext.get().adjustBalance(difference);
+            notify(profile, difference.doubleValue(), economy.currencyNamePlural());
+            return;
+        }
         final OfflinePlayer player = profile.getPlayer();
         final double current = economy.getBalance(player);
         final double target;
@@ -72,19 +89,20 @@ public class MoneyEvent implements Event {
         }
 
         final double difference = target - current;
-        final DecimalFormat decimalFormat = new DecimalFormat("#.00");
-        final String currencyName = economy.currencyNamePlural();
-
         if (difference > 0) {
             economy.depositPlayer(player, difference);
-            if (givenSender != null) {
-                givenSender.sendNotification(profile, decimalFormat.format(difference), currencyName);
-            }
         } else if (difference < 0) {
             economy.withdrawPlayer(player, -difference);
-            if (takenSender != null) {
-                takenSender.sendNotification(profile, decimalFormat.format(difference), currencyName);
-            }
+        }
+        notify(profile, difference, economy.currencyNamePlural());
+    }
+
+    private void notify(final Profile profile, final double difference, final String currencyName) {
+        final DecimalFormat decimalFormat = new DecimalFormat("#.00");
+        if (difference > 0 && givenSender != null) {
+            givenSender.sendNotification(profile, decimalFormat.format(difference), currencyName);
+        } else if (difference < 0 && takenSender != null) {
+            takenSender.sendNotification(profile, decimalFormat.format(difference), currencyName);
         }
     }
 }

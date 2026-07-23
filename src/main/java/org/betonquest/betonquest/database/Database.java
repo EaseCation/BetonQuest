@@ -9,8 +9,10 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.Objects;
 import java.util.Set;
 import java.util.SortedMap;
+import java.util.function.UnaryOperator;
 
 /**
  * Abstract Database class, serves as a base for any connection method (MySQL,
@@ -33,10 +35,28 @@ public abstract class Database {
     protected Connection con;
 
     protected Database(final BetonQuestLogger log, final BetonQuest plugin) {
+        this(log, plugin, plugin.getPluginConfig().getString("mysql.prefix", ""),
+                plugin.getPluginConfig().getString("profiles.initial_name", ""));
+    }
+
+    /**
+     * Creates a database backend with an explicit schema prefix and initial profile name.
+     *
+     * <p>This constructor keeps the transactional persistence layer independently testable without constructing the
+     * full Bukkit plugin lifecycle. Production backends continue to use {@link #Database(BetonQuestLogger, BetonQuest)}.
+     * </p>
+     *
+     * @param log                database logger
+     * @param plugin             owning Bukkit plugin
+     * @param prefix             table prefix
+     * @param profileInitialName initial profile name
+     */
+    protected Database(final BetonQuestLogger log, final Plugin plugin, final String prefix,
+                       final String profileInitialName) {
         this.log = log;
         this.plugin = plugin;
-        this.prefix = plugin.getPluginConfig().getString("mysql.prefix", "");
-        this.profileInitialName = plugin.getPluginConfig().getString("profiles.initial_name", "");
+        this.prefix = prefix;
+        this.profileInitialName = profileInitialName;
     }
 
     public Connection getConnection() {
@@ -120,4 +140,201 @@ public abstract class Database {
      * @throws SQLException if the migration could not be marked as executed
      */
     protected abstract void markMigrationExecuted(Connection connection, MigrationKey migrationKey) throws SQLException;
+
+    /**
+     * Atomically replaces objective instructions and advances the PlayerAsset event cursor.
+     *
+     * <p>The mutation is evaluated from the database value while the objective row is locked. Replayed sequences
+     * return the previously committed instructions without invoking the mutation again.</p>
+     *
+     * @param profileID    profile owning the objective
+     * @param objectiveID  complete objective identifier
+     * @param assetSequence positive PlayerAsset sequence
+     * @param mutation     pure function producing the next instruction string
+     * @return durable processing result
+     */
+    public final AssetSequenceProgressResult commitObjectiveProgress(final String profileID,
+                                                                     final String objectiveID,
+                                                                     final long assetSequence,
+                                                                     final UnaryOperator<String> mutation) {
+        if (assetSequence <= 0) {
+            throw new IllegalArgumentException("assetSequence must be positive");
+        }
+        Objects.requireNonNull(mutation, "mutation");
+        try (Connection connection = openConnection()) {
+            connection.setAutoCommit(false);
+            try {
+                final String current = selectObjectiveInstructions(connection, profileID, objectiveID);
+                final long cursor = selectAssetSequenceCursor(connection, profileID, objectiveID);
+                if (cursor >= assetSequence) {
+                    connection.commit();
+                    return new AssetSequenceProgressResult(AssetSequenceProgressResult.Status.REPLAYED, current);
+                }
+                if (current == null) {
+                    connection.commit();
+                    return new AssetSequenceProgressResult(AssetSequenceProgressResult.Status.NOT_ACTIVE, null);
+                }
+                final String next = Objects.requireNonNull(mutation.apply(current), "objective mutation result");
+                try (PreparedStatement statement = connection.prepareStatement("UPDATE " + prefix
+                        + "objectives SET instructions = ? WHERE profileID = ? AND objective = ? AND instructions = ?")) {
+                    statement.setString(1, next);
+                    statement.setString(2, profileID);
+                    statement.setString(3, objectiveID);
+                    statement.setString(4, current);
+                    if (statement.executeUpdate() != 1) {
+                        throw new SQLException("Objective changed while its asset sequence was being committed");
+                    }
+                }
+                upsertAssetSequenceCursor(connection, profileID, objectiveID, assetSequence);
+                connection.commit();
+                return new AssetSequenceProgressResult(AssetSequenceProgressResult.Status.APPLIED, next);
+            } catch (SQLException | RuntimeException error) {
+                connection.rollback();
+                throw error;
+            }
+        } catch (SQLException sqlException) {
+            throw new IllegalStateException("Could not atomically persist objective progress and asset sequence", sqlException);
+        }
+    }
+
+    /**
+     * Raises a newly started objective's cursor to the current Authority sequence, so events committed before the
+     * objective existed can never be counted later.
+     *
+     * @param profileID profile owning the objective
+     * @param objectiveID complete objective identifier
+     * @param assetSequence current confirmed PlayerAsset sequence
+     */
+    public final void initializeAssetSequenceCursor(final String profileID, final String objectiveID,
+                                                    final long assetSequence) {
+        if (assetSequence < 0) throw new IllegalArgumentException("assetSequence cannot be negative");
+        try (Connection connection = openConnection()) {
+            connection.setAutoCommit(false);
+            try {
+                final long current = selectAssetSequenceCursor(connection, profileID, objectiveID);
+                if (current < assetSequence) {
+                    upsertAssetSequenceCursor(connection, profileID, objectiveID, assetSequence);
+                }
+                connection.commit();
+            } catch (SQLException error) {
+                connection.rollback();
+                throw error;
+            }
+        } catch (SQLException sqlException) {
+            throw new IllegalStateException("Could not initialize objective asset sequence cursor", sqlException);
+        }
+    }
+
+    /**
+     * Atomically removes or resets a completed objective after all authoritative asset rewards were committed.
+     *
+     * <p>The sequence cursor remains in place as the completion receipt. A crash before this transaction leaves the
+     * completed instruction row available for deterministic reward replay; a crash after it makes the same source
+     * sequence a harmless replay.</p>
+     *
+     * @param profileID profile owning the objective
+     * @param objectiveID complete objective identifier
+     * @param assetSequence source PlayerAsset sequence
+     * @param expectedInstructions exact completed instructions previously committed with the cursor
+     * @param persistentInstructions default instructions for persistent objectives, or {@code null} to remove the row
+     * @return {@code true} when this call finalized the row, {@code false} when it was already removed
+     */
+    public final boolean finalizeObjectiveCompletion(final String profileID, final String objectiveID,
+                                                      final long assetSequence, final String expectedInstructions,
+                                                      @Nullable final String persistentInstructions) {
+        if (assetSequence <= 0) throw new IllegalArgumentException("assetSequence must be positive");
+        Objects.requireNonNull(expectedInstructions, "expectedInstructions");
+        try (Connection connection = openConnection()) {
+            connection.setAutoCommit(false);
+            try {
+                final long cursor = selectAssetSequenceCursor(connection, profileID, objectiveID);
+                if (cursor < assetSequence) {
+                    throw new SQLException("Objective completion cursor was not durably committed");
+                }
+                final String current = selectObjectiveInstructions(connection, profileID, objectiveID);
+                if (current == null) {
+                    connection.commit();
+                    return false;
+                }
+                if (!current.equals(expectedInstructions)) {
+                    throw new SQLException("Objective instructions changed before durable completion finalized");
+                }
+                final String sql;
+                if (persistentInstructions == null) {
+                    sql = "DELETE FROM " + prefix
+                            + "objectives WHERE profileID = ? AND objective = ? AND instructions = ?";
+                } else {
+                    sql = "UPDATE " + prefix
+                            + "objectives SET instructions = ? WHERE profileID = ? AND objective = ? AND instructions = ?";
+                }
+                try (PreparedStatement statement = connection.prepareStatement(sql)) {
+                    int index = 1;
+                    if (persistentInstructions != null) statement.setString(index++, persistentInstructions);
+                    statement.setString(index++, profileID);
+                    statement.setString(index++, objectiveID);
+                    statement.setString(index, expectedInstructions);
+                    if (statement.executeUpdate() != 1) {
+                        throw new SQLException("Objective changed while durable completion was finalizing");
+                    }
+                }
+                connection.commit();
+                return true;
+            } catch (SQLException | RuntimeException error) {
+                connection.rollback();
+                throw error;
+            }
+        } catch (SQLException sqlException) {
+            throw new IllegalStateException("Could not finalize durable objective completion", sqlException);
+        }
+    }
+
+    @Nullable
+    private String selectObjectiveInstructions(final Connection connection, final String profileID,
+                                               final String objectiveID) throws SQLException {
+        final String sql = "SELECT instructions FROM " + prefix
+                + "objectives WHERE profileID = ? AND objective = ?" + selectForUpdateClause();
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, profileID);
+            statement.setString(2, objectiveID);
+            try (ResultSet result = statement.executeQuery()) {
+                return result.next() ? result.getString("instructions") : null;
+            }
+        }
+    }
+
+    private long selectAssetSequenceCursor(final Connection connection, final String profileID,
+                                           final String objectiveID) throws SQLException {
+        final String sql = "SELECT asset_sequence FROM " + prefix
+                + "asset_sequence_cursor WHERE profileID = ? AND objective = ?" + selectForUpdateClause();
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, profileID);
+            statement.setString(2, objectiveID);
+            try (ResultSet result = statement.executeQuery()) {
+                return result.next() ? result.getLong("asset_sequence") : -1L;
+            }
+        }
+    }
+
+    private void upsertAssetSequenceCursor(final Connection connection, final String profileID,
+                                           final String objectiveID, final long assetSequence) throws SQLException {
+        try (PreparedStatement update = connection.prepareStatement("UPDATE " + prefix
+                + "asset_sequence_cursor SET asset_sequence = ? WHERE profileID = ? AND objective = ?")) {
+            update.setLong(1, assetSequence);
+            update.setString(2, profileID);
+            update.setString(3, objectiveID);
+            if (update.executeUpdate() == 1) return;
+        }
+        try (PreparedStatement insert = connection.prepareStatement("INSERT INTO " + prefix
+                + "asset_sequence_cursor (profileID, objective, asset_sequence) VALUES (?, ?, ?)")) {
+            insert.setString(1, profileID);
+            insert.setString(2, objectiveID);
+            insert.setLong(3, assetSequence);
+            insert.executeUpdate();
+        }
+    }
+
+    /** MySQL overrides this to lock cursor and objective rows; SQLite serializes writers at update time. */
+    protected String selectForUpdateClause() {
+        return "";
+    }
 }

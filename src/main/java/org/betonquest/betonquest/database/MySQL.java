@@ -83,6 +83,7 @@ public class MySQL extends Database {
         migrations.put(new MigrationKey("betonquest", 1), this::migration1);
         migrations.put(new MigrationKey("betonquest", 2), this::migration2);
         migrations.put(new MigrationKey("betonquest", 3), this::migration3);
+        migrations.put(new MigrationKey("betonquest", 4), this::migration4);
         return migrations;
     }
 
@@ -266,5 +267,21 @@ public class MySQL extends Database {
             statement.executeUpdate("ALTER TABLE " + prefix + "player_profile "
                     + "MODIFY COLUMN name VARCHAR(63) NOT NULL");
         }
+    }
+
+    /** Creates the durable PlayerAsset event cursor used by transactional counting objectives. */
+    private void migration4(final Connection connection) throws SQLException {
+        try (Statement statement = connection.createStatement()) {
+            statement.executeUpdate("CREATE TABLE IF NOT EXISTS " + prefix + "asset_sequence_cursor ("
+                    + "profileID CHAR(36) NOT NULL, "
+                    + "objective VARCHAR(510) NOT NULL, "
+                    + "asset_sequence BIGINT NOT NULL, "
+                    + "PRIMARY KEY (profileID, objective))");
+        }
+    }
+
+    @Override
+    protected String selectForUpdateClause() {
+        return " FOR UPDATE";
     }
 }

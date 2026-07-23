@@ -10,7 +10,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
 
-import static com.ibm.icu.impl.Assert.fail;
+import static org.junit.jupiter.api.Assertions.fail;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**

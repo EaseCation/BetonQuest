@@ -58,7 +58,7 @@ public final class Backup {
             // prepare the database and map
             final Map<String, ResultSet> map = new HashMap<>();
             final String[] tables = {"objectives", "tags", "points", "journals", "player", "backpack", "global_points",
-                    "global_tags", "migration", "player_profile", "profile"};
+                    "global_tags", "migration", "player_profile", "profile", "asset_sequence_cursor"};
             // open database connection
             final Connector database = new Connector();
             // load resultsets into the map
@@ -172,6 +172,7 @@ public final class Backup {
         con.updateSQL(UpdateType.DROP_GLOBAL_POINTS);
         con.updateSQL(UpdateType.DROP_GLOBAL_TAGS);
         con.updateSQL(UpdateType.DROP_MIRGATION);
+        con.updateSQL(UpdateType.DROP_ASSET_SEQUENCE_CURSOR);
         con.updateSQL(UpdateType.DROP_PLAYER_PROFILE);
         con.updateSQL(UpdateType.DROP_PLAYER);
         con.updateSQL(UpdateType.DROP_PROFILE);
@@ -211,6 +212,15 @@ public final class Backup {
                         objectives.getString(key + ".profileID"),
                         objectives.getString(key + ".objective"),
                         objectives.getString(key + ".instructions"));
+            }
+        }
+        final ConfigurationSection assetSequenceCursor = config.getConfigurationSection("asset_sequence_cursor");
+        if (assetSequenceCursor != null) {
+            for (final String key : assetSequenceCursor.getKeys(false)) {
+                con.updateSQL(UpdateType.INSERT_ASSET_SEQUENCE_CURSOR,
+                        assetSequenceCursor.getString(key + ".profileID"),
+                        assetSequenceCursor.getString(key + ".objective"),
+                        assetSequenceCursor.getString(key + ".asset_sequence"));
             }
         }
         final ConfigurationSection tags = config.getConfigurationSection("tags");

@@ -34,6 +34,7 @@ public enum QueryType {
     LOAD_ALL_MIGRATION(prefix -> "SELECT * FROM " + prefix + "migration"),
     LOAD_ALL_PLAYER_PROFILE(prefix -> "SELECT * FROM " + prefix + "player_profile"),
     LOAD_ALL_PROFILE(prefix -> "SELECT * FROM " + prefix + "profile"),
+    LOAD_ALL_ASSET_SEQUENCE_CURSOR(prefix -> "SELECT * FROM " + prefix + "asset_sequence_cursor"),
 
     LOAD_ALL_GLOBAL_TAGS(prefix -> "SELECT * FROM " + prefix + "global_tags"),
     LOAD_ALL_GLOBAL_POINTS(prefix -> "SELECT * FROM " + prefix + "global_points"),

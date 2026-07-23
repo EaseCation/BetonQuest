@@ -56,4 +56,18 @@ public class EventProcessor extends TypedQuestProcessor<EventID, QuestEvent> {
             return true;
         }
     }
+
+    /**
+     * Executes an event for a reliable external fact and propagates every failure to the caller.
+     *
+     * <p>The legacy path deliberately logs and swallows {@link QuestRuntimeException}. An outbox consumer must not ACK
+     * after such a failure, otherwise an item or money reward could be lost permanently.</p>
+     */
+    public void executeDurable(@Nullable final Profile profile, final EventID eventID) throws QuestRuntimeException {
+        final QuestEvent event = values.get(eventID);
+        if (event == null) throw new QuestRuntimeException("Event " + eventID + " is not defined");
+        if (!event.fire(profile)) {
+            throw new QuestRuntimeException("Event " + eventID + " was not handled in durable completion");
+        }
+    }
 }

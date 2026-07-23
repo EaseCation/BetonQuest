@@ -6,6 +6,7 @@ import org.betonquest.betonquest.api.logger.BetonQuestLogger;
 import org.betonquest.betonquest.api.profiles.Profile;
 import org.betonquest.betonquest.exceptions.InstructionParseException;
 import org.betonquest.betonquest.instruction.variable.VariableNumber;
+import org.betonquest.betonquest.database.AssetSequenceProgressResult;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.Locale;
@@ -85,6 +86,41 @@ public abstract class CountingObjective extends Objective {
      */
     public final CountingData getCountingData(final Profile profile) {
         return Objects.requireNonNull((CountingData) dataMap.get(profile));
+    }
+
+    /**
+     * Persists counting progress and the PlayerAsset sequence in one database transaction.
+     *
+     * <p>This path deliberately bypasses {@link org.betonquest.betonquest.database.AsyncSaver}; after commit it only
+     * updates the live data object and notifications. Replaying the same or an older sequence never applies progress
+     * twice.</p>
+     *
+     * @param profile profile owning this objective
+     * @param amount units to move towards completion; zero only advances the cursor
+     * @param assetSequence positive PlayerAsset event sequence
+     * @return durable progress result
+     */
+    @SuppressWarnings("PMD.AvoidSynchronizedStatement")
+    public final DurableProgressResult progressWithAssetSequence(final Profile profile, final int amount,
+                                                                 final long assetSequence) {
+        synchronized (this) {
+            final AssetSequenceProgressResult result = BetonQuest.getInstance().getDB().commitObjectiveProgress(
+                    profile.getProfileUUID().toString(), getLabel(), assetSequence,
+                    current -> new CountingData(current, profile, getLabel()).previewProgressInstruction(amount));
+            final String committed = result.instructions();
+            final CountingData live = (CountingData) dataMap.get(profile);
+            if (live != null && committed != null && !live.toString().equals(committed)) {
+                live.applyCommittedInstruction(committed);
+            }
+            final boolean complete = committed != null
+                    && (live != null ? live.isComplete() : new CountingData(committed, profile, getLabel()).isComplete());
+            return new DurableProgressResult(result.status(), complete, committed);
+        }
+    }
+
+    /** Result exposed to reliable outbox consumers after the database transaction has finished. */
+    public record DurableProgressResult(AssetSequenceProgressResult.Status status, boolean complete,
+                                        @Nullable String instructions) {
     }
 
     /**
@@ -360,13 +396,30 @@ public abstract class CountingObjective extends Objective {
             return this;
         }
 
+        private String previewProgressInstruction(final int amount) {
+            return serialize(targetAmount, amountLeft - amount * directionFactor, directionFactor,
+                    -amount * directionFactor);
+        }
+
+        private void applyCommittedInstruction(final String committed) {
+            final String[] parts = committed.split("/");
+            if (parts.length != 4 || Integer.parseInt(parts[0]) != targetAmount
+                    || Integer.parseInt(parts[2]) != directionFactor) {
+                throw new IllegalArgumentException("Committed counting objective shape does not match live data");
+            }
+            amountLeft = Integer.parseInt(parts[1]);
+            lastChange = Integer.parseInt(parts[3]);
+            notifyDataUpdate();
+        }
+
         @Override
         public String toString() {
-            return String.join("/",
-                    Integer.toString(targetAmount),
-                    Integer.toString(amountLeft),
-                    Integer.toString(directionFactor),
-                    Integer.toString(lastChange));
+            return serialize(targetAmount, amountLeft, directionFactor, lastChange);
+        }
+
+        private static String serialize(final int target, final int left, final int direction, final int change) {
+            return String.join("/", Integer.toString(target), Integer.toString(left),
+                    Integer.toString(direction), Integer.toString(change));
         }
     }
 }

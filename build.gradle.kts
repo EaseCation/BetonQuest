@@ -20,6 +20,19 @@ java {
     }
 }
 
+// BetonQuest still emits Java 17 bytecode. The workspace-wide Paper substitution targets the
+// Java 21-only ASPaper API, so compile this compatibility plugin against its declared Paper API.
+configurations.all {
+    resolutionStrategy.useGlobalDependencySubstitutionRules = false
+    resolutionStrategy.dependencySubstitution.all {
+        val request = requested
+        if (request is org.gradle.api.artifacts.component.ProjectComponentSelector
+            && request.projectPath in setOf(":paper-api", ":aspaper-api")) {
+            useTarget("io.papermc.paper:paper-api:1.18.2-R0.1-SNAPSHOT", "Keep BetonQuest Java 17 compatible")
+        }
+    }
+}
+
 repositories {
     mavenCentral()
     maven("https://repo.papermc.io/repository/maven-public/")
@@ -122,9 +135,11 @@ dependencies {
 
     // Tests are optional for the deploy pipeline (equivalent to Maven -DskipTests).
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher:1.11.4")
     testImplementation("org.mockito:mockito-core:5.14.2")
     testImplementation("org.mockito:mockito-junit-jupiter:5.14.2")
-    testCompileOnly("io.papermc.paper:paper-api:1.18.2-R0.1-SNAPSHOT") {
+    testRuntimeOnly("org.xerial:sqlite-jdbc:3.46.1.3")
+    testImplementation("io.papermc.paper:paper-api:1.18.2-R0.1-SNAPSHOT") {
         exclude(group = "junit", module = "junit")
     }
     testCompileOnly("org.jetbrains:annotations:26.1.0")
