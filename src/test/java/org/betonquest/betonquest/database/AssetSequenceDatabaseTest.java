@@ -49,20 +49,20 @@ final class AssetSequenceDatabaseTest {
         insertObjective("4/5");
         AtomicInteger mutations = new AtomicInteger();
 
-        AssetSequenceProgressResult applied = database.commitObjectiveProgress(
+        DomainEventProgressResult applied = database.commitDomainEventProgress(
                 PROFILE_ID, OBJECTIVE_ID, 10, ignored -> {
                     mutations.incrementAndGet();
                     return "5/5";
                 });
-        AssetSequenceProgressResult replayed = database.commitObjectiveProgress(
+        DomainEventProgressResult replayed = database.commitDomainEventProgress(
                 PROFILE_ID, OBJECTIVE_ID, 10, ignored -> {
                     mutations.incrementAndGet();
                     return "must-not-run";
                 });
 
-        assertEquals(AssetSequenceProgressResult.Status.APPLIED, applied.status());
+        assertEquals(DomainEventProgressResult.Status.APPLIED, applied.status());
         assertEquals("5/5", applied.instructions());
-        assertEquals(AssetSequenceProgressResult.Status.REPLAYED, replayed.status());
+        assertEquals(DomainEventProgressResult.Status.REPLAYED, replayed.status());
         assertEquals("5/5", replayed.instructions());
         assertEquals(1, mutations.get());
         assertEquals(10L, cursor());
@@ -71,17 +71,17 @@ final class AssetSequenceDatabaseTest {
     @Test
     void nonPersistentCompletionFinalizesOnceAndReplayIsHarmless() throws SQLException {
         insertObjective("4/5");
-        AssetSequenceProgressResult applied = database.commitObjectiveProgress(
+        DomainEventProgressResult applied = database.commitDomainEventProgress(
                 PROFILE_ID, OBJECTIVE_ID, 20, ignored -> "5/5");
 
         assertTrue(database.finalizeObjectiveCompletion(
                 PROFILE_ID, OBJECTIVE_ID, 20, applied.instructions(), null));
         assertFalse(database.finalizeObjectiveCompletion(
                 PROFILE_ID, OBJECTIVE_ID, 20, applied.instructions(), null));
-        AssetSequenceProgressResult replayed = database.commitObjectiveProgress(
+        DomainEventProgressResult replayed = database.commitDomainEventProgress(
                 PROFILE_ID, OBJECTIVE_ID, 20, ignored -> "must-not-run");
 
-        assertEquals(AssetSequenceProgressResult.Status.REPLAYED, replayed.status());
+        assertEquals(DomainEventProgressResult.Status.REPLAYED, replayed.status());
         assertNull(replayed.instructions());
         assertEquals(20L, cursor());
     }
@@ -89,24 +89,24 @@ final class AssetSequenceDatabaseTest {
     @Test
     void persistentCompletionResetsOnlyOnceAcrossAckReplay() throws SQLException {
         insertObjective("4/5");
-        AssetSequenceProgressResult applied = database.commitObjectiveProgress(
+        DomainEventProgressResult applied = database.commitDomainEventProgress(
                 PROFILE_ID, OBJECTIVE_ID, 30, ignored -> "5/5");
         assertTrue(database.finalizeObjectiveCompletion(
                 PROFILE_ID, OBJECTIVE_ID, 30, applied.instructions(), "0/5"));
 
         AtomicInteger replayMutations = new AtomicInteger();
-        AssetSequenceProgressResult replayed = database.commitObjectiveProgress(
+        DomainEventProgressResult replayed = database.commitDomainEventProgress(
                 PROFILE_ID, OBJECTIVE_ID, 30, ignored -> {
                     replayMutations.incrementAndGet();
                     return "must-not-run";
                 });
-        AssetSequenceProgressResult nextEvent = database.commitObjectiveProgress(
+        DomainEventProgressResult nextEvent = database.commitDomainEventProgress(
                 PROFILE_ID, OBJECTIVE_ID, 31, ignored -> "1/5");
 
-        assertEquals(AssetSequenceProgressResult.Status.REPLAYED, replayed.status());
+        assertEquals(DomainEventProgressResult.Status.REPLAYED, replayed.status());
         assertEquals("0/5", replayed.instructions());
         assertEquals(0, replayMutations.get());
-        assertEquals(AssetSequenceProgressResult.Status.APPLIED, nextEvent.status());
+        assertEquals(DomainEventProgressResult.Status.APPLIED, nextEvent.status());
         assertEquals("1/5", nextEvent.instructions());
         assertEquals(31L, cursor());
     }

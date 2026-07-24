@@ -7,6 +7,7 @@ import org.betonquest.betonquest.api.profiles.Profile;
 import org.betonquest.betonquest.exceptions.ObjectNotFoundException;
 import org.betonquest.betonquest.exceptions.QuestRuntimeException;
 import org.betonquest.betonquest.id.EventID;
+import org.betonquest.betonquest.integration.observer.QuestObserver;
 import org.betonquest.betonquest.quest.registry.type.EventTypeRegistry;
 import org.jetbrains.annotations.Nullable;
 
@@ -50,7 +51,11 @@ public class EventProcessor extends TypedQuestProcessor<EventID, QuestEvent> {
                     "Firing event " + eventID + " for " + profile);
         }
         try {
-            return event.fire(profile);
+            final boolean handled = event.fire(profile);
+            if (handled && profile != null) {
+                QuestObserver.task(profile, eventID.toString(), "QUEST_EVENT", 1);
+            }
+            return handled;
         } catch (final QuestRuntimeException e) {
             log.warn(eventID.getPackage(), "Error while firing '" + eventID + "' event: " + e.getMessage(), e);
             return true;

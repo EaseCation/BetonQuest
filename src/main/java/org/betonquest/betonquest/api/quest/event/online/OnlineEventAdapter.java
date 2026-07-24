@@ -4,8 +4,6 @@ import org.betonquest.betonquest.api.config.quest.QuestPackage;
 import org.betonquest.betonquest.api.logger.BetonQuestLogger;
 import org.betonquest.betonquest.api.profiles.OnlineProfile;
 import org.betonquest.betonquest.api.profiles.Profile;
-import org.betonquest.betonquest.api.asset.AssetAwareOnlineEvent;
-import org.betonquest.betonquest.api.asset.AssetRewardContexts;
 import org.betonquest.betonquest.api.quest.event.Event;
 import org.betonquest.betonquest.exceptions.QuestRuntimeException;
 
@@ -55,11 +53,6 @@ public final class OnlineEventAdapter implements Event {
 
     @Override
     public void execute(final Profile profile) throws QuestRuntimeException {
-        final var rewardContext = AssetRewardContexts.current(profile);
-        if (rewardContext.isPresent() && onlineEvent instanceof AssetAwareOnlineEvent assetAware) {
-            assetAware.executeAsset(profile, rewardContext.get());
-            return;
-        }
         final Optional<OnlineProfile> onlineProfile = profile.getOnlineProfile();
         if (onlineProfile.isPresent()) {
             onlineEvent.execute(onlineProfile.get());

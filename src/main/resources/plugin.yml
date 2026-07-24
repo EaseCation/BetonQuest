@@ -38,6 +38,7 @@ softdepend:
   - fake-block
   - RedisChat
   - Train_Carts
+  - PlayerObserverPaper
 commands:
   betonquest:
     description: General quest command

@@ -284,7 +284,7 @@ public class SQLite extends Database {
         }
     }
 
-    /** Creates the durable PlayerAsset event cursor used by transactional counting objectives. */
+    /** Creates the legacy-named durable source-domain cursor used by transactional counting objectives. */
     private void migration4(final Connection connection) throws SQLException {
         try (Statement statement = connection.createStatement()) {
             statement.executeUpdate("CREATE TABLE IF NOT EXISTS " + prefix + "asset_sequence_cursor ("

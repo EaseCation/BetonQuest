@@ -3,12 +3,10 @@ package org.betonquest.betonquest.quest.event.give;
 import org.betonquest.betonquest.BetonQuest;
 import org.betonquest.betonquest.Instruction.Item;
 import org.betonquest.betonquest.api.profiles.OnlineProfile;
-import org.betonquest.betonquest.api.profiles.Profile;
-import org.betonquest.betonquest.api.asset.AssetAwareOnlineEvent;
-import org.betonquest.betonquest.api.asset.AssetRewardContext;
 import org.betonquest.betonquest.api.quest.event.online.OnlineEvent;
 import org.betonquest.betonquest.exceptions.QuestRuntimeException;
 import org.betonquest.betonquest.item.QuestItem;
+import org.betonquest.betonquest.integration.observer.QuestObserver;
 import org.betonquest.betonquest.quest.event.NotificationSender;
 import org.betonquest.betonquest.utils.Utils;
 import org.bukkit.entity.Player;
@@ -21,7 +19,7 @@ import java.util.Locale;
 /**
  * Gives the player items.
  */
-public class GiveEvent implements OnlineEvent, AssetAwareOnlineEvent {
+public class GiveEvent implements OnlineEvent {
 
     /**
      * The items to give.
@@ -68,6 +66,7 @@ public class GiveEvent implements OnlineEvent, AssetAwareOnlineEvent {
     @Override
     public void execute(final OnlineProfile profile) throws QuestRuntimeException {
         final Player player = profile.getPlayer();
+        int totalGiven = 0;
         for (final Item item : questItems) {
             final QuestItem questItem = item.getItem();
             final int amount = item.getAmount().getValue(profile).intValue();
@@ -76,32 +75,9 @@ public class GiveEvent implements OnlineEvent, AssetAwareOnlineEvent {
                     ? questItem.getMaterial().toString().toLowerCase(Locale.ROOT).replace("_", " ")
                     : questItem.getName();
             itemsGivenSender.sendNotification(profile, questItemName, String.valueOf(amount));
+            totalGiven += Math.max(0, amount);
         }
-    }
-
-    @Override
-    public void executeAsset(final Profile profile, final AssetRewardContext context) throws QuestRuntimeException {
-        if (backpack) {
-            throw new QuestRuntimeException("Authority mode cannot deliver real assets to the BetonQuest backpack");
-        }
-        for (final Item item : questItems) {
-            final QuestItem questItem = item.getItem();
-            int amount = item.getAmount().getValue(profile).intValue();
-            final int totalAmount = amount;
-            while (amount > 0) {
-                final ItemStack template = questItem.generate(1, profile);
-                final int stackSize = Math.min(amount, template.getMaxStackSize());
-                if (stackSize <= 0) throw new QuestRuntimeException("Item stack size is 0 or less!");
-                final ItemStack reward = template.clone();
-                reward.setAmount(stackSize);
-                context.give(reward);
-                amount -= stackSize;
-            }
-            final String questItemName = questItem.getName() == null
-                    ? questItem.getMaterial().toString().toLowerCase(Locale.ROOT).replace("_", " ")
-                    : questItem.getName();
-            itemsGivenSender.sendNotification(profile, questItemName, String.valueOf(totalAmount));
-        }
+        QuestObserver.task(profile, "give", "GIVE_ITEMS", totalGiven);
     }
 
     @SuppressWarnings("PMD.CognitiveComplexity")

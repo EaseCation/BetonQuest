@@ -221,12 +221,17 @@ public abstract class Objective {
     /**
      * Fires completion events without changing objective state.
      *
-     * <p>Reliable external-event consumers use this before their authoritative reward mutation. If the server crashes,
-     * the still-active completed instruction row causes the same events to be evaluated again; asset-aware events are
-     * deduplicated by their deterministic Authority operation.</p>
+     * <p>Reliable source-domain consumers use this before finalizing their cursor. Individual reward integrations are
+     * responsible for their own idempotency; PlayerObserver is never part of completion or acknowledgement.</p>
      */
-    public final void fireAssetSequenceCompletionEvents(final Profile profile) throws QuestRuntimeException {
+    public final void fireSourceEventCompletionEvents(final Profile profile) throws QuestRuntimeException {
         for (final EventID event : events) BetonQuest.durableEvent(profile, event);
+    }
+
+    /** @deprecated use {@link #fireSourceEventCompletionEvents(Profile)}. */
+    @Deprecated(forRemoval = false)
+    public final void fireAssetSequenceCompletionEvents(final Profile profile) throws QuestRuntimeException {
+        fireSourceEventCompletionEvents(profile);
     }
 
     private void fireCompletionEvents(final Profile profile) {
@@ -236,23 +241,30 @@ public abstract class Objective {
     }
 
     /**
-     * Finalizes an objective only after its authoritative asset rewards have committed.
+     * Finalizes an objective after source-domain completion handling succeeds.
      *
      * @param profile profile owning the objective
-     * @param assetSequence source PlayerAsset sequence
+     * @param sourceSequence source-domain sequence
      * @param completedInstructions exact completed instruction persisted with the sequence cursor
      * @return whether this call finalized the durable objective row
      */
-    public final boolean finalizeAssetSequenceCompletion(final Profile profile, final long assetSequence,
-                                                         final String completedInstructions) {
+    public final boolean finalizeSourceEventCompletion(final Profile profile, final long sourceSequence,
+                                                       final String completedInstructions) {
         final String persistentInstructions = persistent ? getDefaultDataInstruction(profile) : null;
-        final boolean finalized = BetonQuest.getInstance().getDB().finalizeObjectiveCompletion(
-                profile.getProfileUUID().toString(), getLabel(), assetSequence,
+        final boolean finalized = BetonQuest.getInstance().getDB().finalizeDomainEventCompletion(
+                profile.getProfileUUID().toString(), getLabel(), sourceSequence,
                 completedInstructions, persistentInstructions);
         if (!finalized) return false;
         if (containsPlayer(profile)) completeObjectiveForPlayer(profile);
         if (persistent) createObjectiveForPlayer(profile, persistentInstructions);
         return true;
+    }
+
+    /** @deprecated use {@link #finalizeSourceEventCompletion(Profile, long, String)}. */
+    @Deprecated(forRemoval = false)
+    public final boolean finalizeAssetSequenceCompletion(final Profile profile, final long assetSequence,
+                                                         final String completedInstructions) {
+        return finalizeSourceEventCompletion(profile, assetSequence, completedInstructions);
     }
 
     /**

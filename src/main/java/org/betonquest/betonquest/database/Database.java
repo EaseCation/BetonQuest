@@ -142,37 +142,37 @@ public abstract class Database {
     protected abstract void markMigrationExecuted(Connection connection, MigrationKey migrationKey) throws SQLException;
 
     /**
-     * Atomically replaces objective instructions and advances the PlayerAsset event cursor.
+     * Atomically replaces objective instructions and advances a source-domain event cursor.
      *
      * <p>The mutation is evaluated from the database value while the objective row is locked. Replayed sequences
      * return the previously committed instructions without invoking the mutation again.</p>
      *
      * @param profileID    profile owning the objective
      * @param objectiveID  complete objective identifier
-     * @param assetSequence positive PlayerAsset sequence
+     * @param sourceSequence positive sequence assigned by the source domain's durable outbox
      * @param mutation     pure function producing the next instruction string
      * @return durable processing result
      */
-    public final AssetSequenceProgressResult commitObjectiveProgress(final String profileID,
-                                                                     final String objectiveID,
-                                                                     final long assetSequence,
-                                                                     final UnaryOperator<String> mutation) {
-        if (assetSequence <= 0) {
-            throw new IllegalArgumentException("assetSequence must be positive");
+    public final DomainEventProgressResult commitDomainEventProgress(final String profileID,
+                                                                      final String objectiveID,
+                                                                      final long sourceSequence,
+                                                                      final UnaryOperator<String> mutation) {
+        if (sourceSequence <= 0) {
+            throw new IllegalArgumentException("sourceSequence must be positive");
         }
         Objects.requireNonNull(mutation, "mutation");
         try (Connection connection = openConnection()) {
             connection.setAutoCommit(false);
             try {
                 final String current = selectObjectiveInstructions(connection, profileID, objectiveID);
-                final long cursor = selectAssetSequenceCursor(connection, profileID, objectiveID);
-                if (cursor >= assetSequence) {
+                final long cursor = selectDomainEventCursor(connection, profileID, objectiveID);
+                if (cursor >= sourceSequence) {
                     connection.commit();
-                    return new AssetSequenceProgressResult(AssetSequenceProgressResult.Status.REPLAYED, current);
+                    return new DomainEventProgressResult(DomainEventProgressResult.Status.REPLAYED, current);
                 }
                 if (current == null) {
                     connection.commit();
-                    return new AssetSequenceProgressResult(AssetSequenceProgressResult.Status.NOT_ACTIVE, null);
+                    return new DomainEventProgressResult(DomainEventProgressResult.Status.NOT_ACTIVE, null);
                 }
                 final String next = Objects.requireNonNull(mutation.apply(current), "objective mutation result");
                 try (PreparedStatement statement = connection.prepareStatement("UPDATE " + prefix
@@ -182,38 +182,50 @@ public abstract class Database {
                     statement.setString(3, objectiveID);
                     statement.setString(4, current);
                     if (statement.executeUpdate() != 1) {
-                        throw new SQLException("Objective changed while its asset sequence was being committed");
+                        throw new SQLException("Objective changed while its source event sequence was being committed");
                     }
                 }
-                upsertAssetSequenceCursor(connection, profileID, objectiveID, assetSequence);
+                upsertDomainEventCursor(connection, profileID, objectiveID, sourceSequence);
                 connection.commit();
-                return new AssetSequenceProgressResult(AssetSequenceProgressResult.Status.APPLIED, next);
+                return new DomainEventProgressResult(DomainEventProgressResult.Status.APPLIED, next);
             } catch (SQLException | RuntimeException error) {
                 connection.rollback();
                 throw error;
             }
         } catch (SQLException sqlException) {
-            throw new IllegalStateException("Could not atomically persist objective progress and asset sequence", sqlException);
+            throw new IllegalStateException("Could not atomically persist objective progress and source sequence", sqlException);
         }
     }
 
+    /** @deprecated use {@link #commitDomainEventProgress(String, String, long, UnaryOperator)}. */
+    @Deprecated(forRemoval = false)
+    public final AssetSequenceProgressResult commitObjectiveProgress(final String profileID,
+                                                                     final String objectiveID,
+                                                                     final long assetSequence,
+                                                                     final UnaryOperator<String> mutation) {
+        final DomainEventProgressResult result = commitDomainEventProgress(
+                profileID, objectiveID, assetSequence, mutation);
+        return new AssetSequenceProgressResult(
+                AssetSequenceProgressResult.Status.valueOf(result.status().name()), result.instructions());
+    }
+
     /**
-     * Raises a newly started objective's cursor to the current Authority sequence, so events committed before the
+     * Raises a newly started objective's cursor to the current source-domain sequence, so events committed before the
      * objective existed can never be counted later.
      *
      * @param profileID profile owning the objective
      * @param objectiveID complete objective identifier
-     * @param assetSequence current confirmed PlayerAsset sequence
+     * @param sourceSequence current confirmed source-domain sequence
      */
-    public final void initializeAssetSequenceCursor(final String profileID, final String objectiveID,
-                                                    final long assetSequence) {
-        if (assetSequence < 0) throw new IllegalArgumentException("assetSequence cannot be negative");
+    public final void initializeDomainEventCursor(final String profileID, final String objectiveID,
+                                                   final long sourceSequence) {
+        if (sourceSequence < 0) throw new IllegalArgumentException("sourceSequence cannot be negative");
         try (Connection connection = openConnection()) {
             connection.setAutoCommit(false);
             try {
-                final long current = selectAssetSequenceCursor(connection, profileID, objectiveID);
-                if (current < assetSequence) {
-                    upsertAssetSequenceCursor(connection, profileID, objectiveID, assetSequence);
+                final long current = selectDomainEventCursor(connection, profileID, objectiveID);
+                if (current < sourceSequence) {
+                    upsertDomainEventCursor(connection, profileID, objectiveID, sourceSequence);
                 }
                 connection.commit();
             } catch (SQLException error) {
@@ -221,12 +233,19 @@ public abstract class Database {
                 throw error;
             }
         } catch (SQLException sqlException) {
-            throw new IllegalStateException("Could not initialize objective asset sequence cursor", sqlException);
+            throw new IllegalStateException("Could not initialize objective source event cursor", sqlException);
         }
     }
 
+    /** @deprecated use {@link #initializeDomainEventCursor(String, String, long)}. */
+    @Deprecated(forRemoval = false)
+    public final void initializeAssetSequenceCursor(final String profileID, final String objectiveID,
+                                                     final long assetSequence) {
+        initializeDomainEventCursor(profileID, objectiveID, assetSequence);
+    }
+
     /**
-     * Atomically removes or resets a completed objective after all authoritative asset rewards were committed.
+     * Atomically removes or resets a completed objective after its source-domain completion handling succeeds.
      *
      * <p>The sequence cursor remains in place as the completion receipt. A crash before this transaction leaves the
      * completed instruction row available for deterministic reward replay; a crash after it makes the same source
@@ -234,21 +253,21 @@ public abstract class Database {
      *
      * @param profileID profile owning the objective
      * @param objectiveID complete objective identifier
-     * @param assetSequence source PlayerAsset sequence
+     * @param sourceSequence source-domain sequence
      * @param expectedInstructions exact completed instructions previously committed with the cursor
      * @param persistentInstructions default instructions for persistent objectives, or {@code null} to remove the row
      * @return {@code true} when this call finalized the row, {@code false} when it was already removed
      */
-    public final boolean finalizeObjectiveCompletion(final String profileID, final String objectiveID,
-                                                      final long assetSequence, final String expectedInstructions,
-                                                      @Nullable final String persistentInstructions) {
-        if (assetSequence <= 0) throw new IllegalArgumentException("assetSequence must be positive");
+    public final boolean finalizeDomainEventCompletion(final String profileID, final String objectiveID,
+                                                        final long sourceSequence, final String expectedInstructions,
+                                                        @Nullable final String persistentInstructions) {
+        if (sourceSequence <= 0) throw new IllegalArgumentException("sourceSequence must be positive");
         Objects.requireNonNull(expectedInstructions, "expectedInstructions");
         try (Connection connection = openConnection()) {
             connection.setAutoCommit(false);
             try {
-                final long cursor = selectAssetSequenceCursor(connection, profileID, objectiveID);
-                if (cursor < assetSequence) {
+                final long cursor = selectDomainEventCursor(connection, profileID, objectiveID);
+                if (cursor < sourceSequence) {
                     throw new SQLException("Objective completion cursor was not durably committed");
                 }
                 final String current = selectObjectiveInstructions(connection, profileID, objectiveID);
@@ -288,6 +307,15 @@ public abstract class Database {
         }
     }
 
+    /** @deprecated use {@link #finalizeDomainEventCompletion(String, String, long, String, String)}. */
+    @Deprecated(forRemoval = false)
+    public final boolean finalizeObjectiveCompletion(final String profileID, final String objectiveID,
+                                                      final long assetSequence, final String expectedInstructions,
+                                                      @Nullable final String persistentInstructions) {
+        return finalizeDomainEventCompletion(
+                profileID, objectiveID, assetSequence, expectedInstructions, persistentInstructions);
+    }
+
     @Nullable
     private String selectObjectiveInstructions(final Connection connection, final String profileID,
                                                final String objectiveID) throws SQLException {
@@ -302,8 +330,8 @@ public abstract class Database {
         }
     }
 
-    private long selectAssetSequenceCursor(final Connection connection, final String profileID,
-                                           final String objectiveID) throws SQLException {
+    private long selectDomainEventCursor(final Connection connection, final String profileID,
+                                         final String objectiveID) throws SQLException {
         final String sql = "SELECT asset_sequence FROM " + prefix
                 + "asset_sequence_cursor WHERE profileID = ? AND objective = ?" + selectForUpdateClause();
         try (PreparedStatement statement = connection.prepareStatement(sql)) {
@@ -315,11 +343,11 @@ public abstract class Database {
         }
     }
 
-    private void upsertAssetSequenceCursor(final Connection connection, final String profileID,
-                                           final String objectiveID, final long assetSequence) throws SQLException {
+    private void upsertDomainEventCursor(final Connection connection, final String profileID,
+                                         final String objectiveID, final long sourceSequence) throws SQLException {
         try (PreparedStatement update = connection.prepareStatement("UPDATE " + prefix
                 + "asset_sequence_cursor SET asset_sequence = ? WHERE profileID = ? AND objective = ?")) {
-            update.setLong(1, assetSequence);
+            update.setLong(1, sourceSequence);
             update.setString(2, profileID);
             update.setString(3, objectiveID);
             if (update.executeUpdate() == 1) return;
@@ -328,7 +356,7 @@ public abstract class Database {
                 + "asset_sequence_cursor (profileID, objective, asset_sequence) VALUES (?, ?, ?)")) {
             insert.setString(1, profileID);
             insert.setString(2, objectiveID);
-            insert.setLong(3, assetSequence);
+            insert.setLong(3, sourceSequence);
             insert.executeUpdate();
         }
     }

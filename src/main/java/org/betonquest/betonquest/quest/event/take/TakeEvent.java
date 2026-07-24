@@ -6,6 +6,7 @@ import org.betonquest.betonquest.api.profiles.OnlineProfile;
 import org.betonquest.betonquest.api.profiles.Profile;
 import org.betonquest.betonquest.exceptions.QuestRuntimeException;
 import org.betonquest.betonquest.item.QuestItem;
+import org.betonquest.betonquest.integration.observer.QuestObserver;
 import org.betonquest.betonquest.quest.event.NotificationSender;
 import org.bukkit.inventory.ItemStack;
 
@@ -44,6 +45,7 @@ public class TakeEvent extends AbstractTakeEvent {
 
     @Override
     public void execute(final OnlineProfile profile) throws QuestRuntimeException {
+        int totalTaken = 0;
         for (final Instruction.Item item : questItems) {
             final QuestItem questItem = item.getItem();
             final int deleteAmount = item.getAmount().getValue(profile).intValue();
@@ -53,8 +55,11 @@ public class TakeEvent extends AbstractTakeEvent {
             final String itemName = questItem.getName() == null
                     ? new ItemStack(questItem.getMaterial()).getItemMeta().getDisplayName()
                     : questItem.getName();
-            notificationSender.sendNotification(profile, itemName, String.valueOf(deleteAmount - neededDeletions.get(profile.getProfileUUID()).getRight()));
+            final int taken = deleteAmount - neededDeletions.get(profile.getProfileUUID()).getRight();
+            notificationSender.sendNotification(profile, itemName, String.valueOf(taken));
+            totalTaken += Math.max(0, taken);
         }
+        QuestObserver.task(profile, "take", "TAKE_ITEMS", totalTaken);
     }
 
     @Override

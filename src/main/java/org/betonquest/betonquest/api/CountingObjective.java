@@ -7,6 +7,7 @@ import org.betonquest.betonquest.api.profiles.Profile;
 import org.betonquest.betonquest.exceptions.InstructionParseException;
 import org.betonquest.betonquest.instruction.variable.VariableNumber;
 import org.betonquest.betonquest.database.AssetSequenceProgressResult;
+import org.betonquest.betonquest.database.DomainEventProgressResult;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.Locale;
@@ -89,7 +90,7 @@ public abstract class CountingObjective extends Objective {
     }
 
     /**
-     * Persists counting progress and the PlayerAsset sequence in one database transaction.
+     * Persists counting progress and a source-domain sequence in one database transaction.
      *
      * <p>This path deliberately bypasses {@link org.betonquest.betonquest.database.AsyncSaver}; after commit it only
      * updates the live data object and notifications. Replaying the same or an older sequence never applies progress
@@ -97,15 +98,15 @@ public abstract class CountingObjective extends Objective {
      *
      * @param profile profile owning this objective
      * @param amount units to move towards completion; zero only advances the cursor
-     * @param assetSequence positive PlayerAsset event sequence
+     * @param sourceSequence positive sequence assigned by the source domain
      * @return durable progress result
      */
     @SuppressWarnings("PMD.AvoidSynchronizedStatement")
-    public final DurableProgressResult progressWithAssetSequence(final Profile profile, final int amount,
-                                                                 final long assetSequence) {
+    public final DomainDurableProgressResult progressWithSourceSequence(final Profile profile, final int amount,
+                                                                         final long sourceSequence) {
         synchronized (this) {
-            final AssetSequenceProgressResult result = BetonQuest.getInstance().getDB().commitObjectiveProgress(
-                    profile.getProfileUUID().toString(), getLabel(), assetSequence,
+            final DomainEventProgressResult result = BetonQuest.getInstance().getDB().commitDomainEventProgress(
+                    profile.getProfileUUID().toString(), getLabel(), sourceSequence,
                     current -> new CountingData(current, profile, getLabel()).previewProgressInstruction(amount));
             final String committed = result.instructions();
             final CountingData live = (CountingData) dataMap.get(profile);
@@ -114,8 +115,23 @@ public abstract class CountingObjective extends Objective {
             }
             final boolean complete = committed != null
                     && (live != null ? live.isComplete() : new CountingData(committed, profile, getLabel()).isComplete());
-            return new DurableProgressResult(result.status(), complete, committed);
+            return new DomainDurableProgressResult(result.status(), complete, committed);
         }
+    }
+
+    /** @deprecated use {@link #progressWithSourceSequence(Profile, int, long)}. */
+    @Deprecated(forRemoval = false)
+    public final DurableProgressResult progressWithAssetSequence(final Profile profile, final int amount,
+                                                                 final long assetSequence) {
+        final DomainDurableProgressResult result = progressWithSourceSequence(profile, amount, assetSequence);
+        return new DurableProgressResult(
+                AssetSequenceProgressResult.Status.valueOf(result.status().name()),
+                result.complete(), result.instructions());
+    }
+
+    /** Result exposed to reliable source-domain consumers after the database transaction has finished. */
+    public record DomainDurableProgressResult(DomainEventProgressResult.Status status, boolean complete,
+                                              @Nullable String instructions) {
     }
 
     /** Result exposed to reliable outbox consumers after the database transaction has finished. */
