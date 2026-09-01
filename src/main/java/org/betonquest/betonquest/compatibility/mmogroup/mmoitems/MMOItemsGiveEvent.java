@@ -6,6 +6,7 @@ import net.Indyuce.mmoitems.api.player.PlayerData;
 import org.betonquest.betonquest.BetonQuest;
 import org.betonquest.betonquest.Instruction;
 import org.betonquest.betonquest.api.QuestEvent;
+import org.betonquest.betonquest.api.PlayerItemsGrantedEvent;
 import org.betonquest.betonquest.api.logger.BetonQuestLogger;
 import org.betonquest.betonquest.api.profiles.Profile;
 import org.betonquest.betonquest.config.Config;
@@ -17,6 +18,9 @@ import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 
 import java.util.Map;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.UUID;
 
 @SuppressWarnings("PMD.CommentRequired")
 public class MMOItemsGiveEvent extends QuestEvent {
@@ -83,6 +87,7 @@ public class MMOItemsGiveEvent extends QuestEvent {
         }
 
         int amount = amountVar.getInt(profile);
+        final List<ItemStack> grantedItems = new ArrayList<>();
 
         if (notify) {
             try {
@@ -104,12 +109,24 @@ public class MMOItemsGiveEvent extends QuestEvent {
                 stackSize = 1;
             }
 
-            mmoItem.setAmount(stackSize);
-            final Map<Integer, ItemStack> left = player.getInventory().addItem(mmoItem);
+            final ItemStack requested = mmoItem.clone();
+            requested.setAmount(stackSize);
+            final Map<Integer, ItemStack> left = player.getInventory().addItem(requested);
+            final int leftoverAmount = left.values().stream().mapToInt(ItemStack::getAmount).sum();
+            final int insertedAmount = Math.max(0, stackSize - leftoverAmount);
+            if (insertedAmount > 0) {
+                final ItemStack inserted = requested.clone();
+                inserted.setAmount(insertedAmount);
+                grantedItems.add(inserted);
+            }
             for (final ItemStack itemStack : left.values()) {
                 player.getWorld().dropItem(player.getLocation(), itemStack);
             }
             amount -= stackSize;
+        }
+        if (!grantedItems.isEmpty()) {
+            BetonQuest.getInstance().callSyncBukkitEvent(new PlayerItemsGrantedEvent(
+                    profile.getOnlineProfile().get(), UUID.randomUUID(), grantedItems));
         }
         return null;
     }

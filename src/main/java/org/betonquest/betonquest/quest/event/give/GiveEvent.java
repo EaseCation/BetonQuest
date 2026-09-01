@@ -2,6 +2,7 @@ package org.betonquest.betonquest.quest.event.give;
 
 import org.betonquest.betonquest.BetonQuest;
 import org.betonquest.betonquest.Instruction.Item;
+import org.betonquest.betonquest.api.PlayerItemsGrantedEvent;
 import org.betonquest.betonquest.api.profiles.OnlineProfile;
 import org.betonquest.betonquest.api.quest.event.online.OnlineEvent;
 import org.betonquest.betonquest.exceptions.QuestRuntimeException;
@@ -14,7 +15,10 @@ import org.bukkit.inventory.ItemStack;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.Arrays;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
+import java.util.UUID;
 
 /**
  * Gives the player items.
@@ -67,23 +71,29 @@ public class GiveEvent implements OnlineEvent {
     public void execute(final OnlineProfile profile) throws QuestRuntimeException {
         final Player player = profile.getPlayer();
         int totalGiven = 0;
+        final List<ItemStack> grantedItems = new ArrayList<>();
         for (final Item item : questItems) {
             final QuestItem questItem = item.getItem();
             final int amount = item.getAmount().getValue(profile).intValue();
-            giveItems(profile, player, questItem, amount);
+            grantedItems.addAll(giveItems(profile, player, questItem, amount));
             final String questItemName = questItem.getName() == null
                     ? questItem.getMaterial().toString().toLowerCase(Locale.ROOT).replace("_", " ")
                     : questItem.getName();
             itemsGivenSender.sendNotification(profile, questItemName, String.valueOf(amount));
             totalGiven += Math.max(0, amount);
         }
+        if (!grantedItems.isEmpty()) {
+            BetonQuest.getInstance().callSyncBukkitEvent(
+                    new PlayerItemsGrantedEvent(profile, UUID.randomUUID(), grantedItems));
+        }
         QuestObserver.task(profile, "give", "GIVE_ITEMS", totalGiven);
     }
 
     @SuppressWarnings("PMD.CognitiveComplexity")
-    private void giveItems(final OnlineProfile profile, final Player player, final QuestItem questItem, final int totalAmount)
+    private List<ItemStack> giveItems(final OnlineProfile profile, final Player player, final QuestItem questItem, final int totalAmount)
             throws QuestRuntimeException {
         int amount = totalAmount;
+        final List<ItemStack> grantedItems = new ArrayList<>();
         while (amount > 0) {
             final ItemStack itemStackTemplate = questItem.generate(1, profile);
             final int stackSize = Math.min(amount, itemStackTemplate.getMaxStackSize());
@@ -95,6 +105,10 @@ public class GiveEvent implements OnlineEvent {
             itemStack.setAmount(stackSize);
             if (!backpack) {
                 final ItemStack leftItems = giveToInventory(player, itemStack);
+                final int insertedAmount = stackSize - (leftItems == null ? 0 : leftItems.getAmount());
+                if (insertedAmount > 0) {
+                    grantedItems.add(withAmount(itemStackTemplate, insertedAmount));
+                }
                 if (leftItems == null) {
                     amount -= stackSize;
                     continue;
@@ -105,6 +119,7 @@ public class GiveEvent implements OnlineEvent {
             }
             if (Utils.isQuestItem(itemStack)) {
                 giveToBackpack(profile, itemStack);
+                grantedItems.add(itemStack.clone());
                 if (fullInventory) {
                     itemsInBackpackSender.sendNotification(profile);
                 }
@@ -114,6 +129,13 @@ public class GiveEvent implements OnlineEvent {
             }
             amount -= stackSize;
         }
+        return List.copyOf(grantedItems);
+    }
+
+    private ItemStack withAmount(final ItemStack source, final int amount) {
+        final ItemStack snapshot = source.clone();
+        snapshot.setAmount(amount);
+        return snapshot;
     }
 
     /**
