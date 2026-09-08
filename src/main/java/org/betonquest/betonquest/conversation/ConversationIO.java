@@ -50,6 +50,16 @@ public interface ConversationIO {
     }
 
     /**
+     * Allows an IO to provide character-specific conversation audio.
+     *
+     * @param soundName the lifecycle cue, currently "start" or "end"
+     * @return true if handled (including intentionally silent); false to use the global sound configuration
+     */
+    default boolean playConversationSound(final String soundName) {
+        return false;
+    }
+
+    /**
      * Send message through ConversationIO
      *
      * @param message The message to send

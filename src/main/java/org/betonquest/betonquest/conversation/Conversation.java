@@ -384,7 +384,9 @@ public class Conversation implements Listener {
                 conv.inOut.print(Config.parseMessage(pack, onlineProfile, "conversation_end", data.getQuester(language)));
             }
             //play conversation end sound
-            Config.playSound(onlineProfile, "end");
+            if (!inOut.playConversationSound("end")) {
+                Config.playSound(onlineProfile, "end");
+            }
 
             // End interceptor after a second
             if (interceptor != null) {
@@ -711,7 +713,9 @@ public class Conversation implements Listener {
                                 prefixName, prefixVariables));
                     }
 
-                    Config.playSound(onlineProfile, "start");
+                    if (!conv.inOut.playConversationSound("start")) {
+                        Config.playSound(onlineProfile, "start");
+                    }
                 } else {
                     final List<ResolvedOption> resolvedOptions = resolveOptions(startingOptions);
                     selectOption(resolvedOptions, true);
