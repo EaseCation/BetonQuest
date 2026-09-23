@@ -73,11 +73,13 @@ public class MoneyEvent implements Event {
         }
 
         final double difference = target - current;
+        final net.milkbowl.vault.economy.EconomyResponse response;
         if (difference > 0) {
-            economy.depositPlayer(player, difference);
+            response = economy.depositPlayer(player, difference);
         } else if (difference < 0) {
-            economy.withdrawPlayer(player, -difference);
-        }
+            response = economy.withdrawPlayer(player, -difference);
+        } else { return; }
+        if (!response.transactionSuccess()) throw new QuestRuntimeException("Economy transaction failed: " + response.errorMessage);
         final double confirmed = economy.getBalance(player);
         QuestObserver.balance(profile, economy.getName(),
                 Double.toString(current), Double.toString(confirmed), "betonquest_money_event");

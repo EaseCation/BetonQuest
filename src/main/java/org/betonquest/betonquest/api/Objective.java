@@ -623,8 +623,9 @@ public abstract class Objective {
          */
         protected final void update() {
             final Saver saver = BetonQuest.getInstance().getSaver();
-            saver.add(new Saver.Record(UpdateType.REMOVE_OBJECTIVES, profile.getProfileUUID().toString(), objID));
-            saver.add(new Saver.Record(UpdateType.ADD_OBJECTIVES, profile.getProfileUUID().toString(), objID, toString()));
+            saver.save(java.util.List.of(
+                    new Saver.Record(UpdateType.REMOVE_OBJECTIVES, profile.getProfileUUID().toString(), objID),
+                    new Saver.Record(UpdateType.ADD_OBJECTIVES, profile.getProfileUUID().toString(), objID, toString())));
             notifyDataUpdate();
         }
 

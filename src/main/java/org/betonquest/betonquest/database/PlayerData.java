@@ -135,7 +135,7 @@ public class PlayerData implements TagData {
                         + " items for " + profile);
             }
         } catch (final SQLException e) {
-            log.error("There was an exception with SQL", e);
+            throw new IllegalStateException("Could not load complete quest data for " + profileID, e);
         }
     }
 
@@ -161,11 +161,10 @@ public class PlayerData implements TagData {
 
     private void setupProfile() {
         profileLanguage = Config.getLanguage();
-        saver.add(new Record(UpdateType.ADD_PROFILE, profileID));
-        saver.add(new Record(UpdateType.ADD_PLAYER, profile.getPlayer().getUniqueId().toString(),
-                profileID, "default"));
-        saver.add(new Record(UpdateType.ADD_PLAYER_PROFILE, profile.getPlayer().getUniqueId().toString(),
-                profileID, BetonQuest.getInstance().getPluginConfig().getString("profiles.initial_name", "default")));
+        saver.save(List.of(new Record(UpdateType.ADD_PROFILE, profileID),
+                new Record(UpdateType.ADD_PLAYER, profile.getPlayer().getUniqueId().toString(), profileID, "default"),
+                new Record(UpdateType.ADD_PLAYER_PROFILE, profile.getPlayer().getUniqueId().toString(), profileID,
+                        BetonQuest.getInstance().getPluginConfig().getString("profiles.initial_name", "default"))));
     }
 
     private void addItemToBackpack(final ResultSet backpackResults) throws SQLException {
@@ -275,13 +274,11 @@ public class PlayerData implements TagData {
      */
     public void modifyPoints(final String category, final int count) {
         synchronized (points) {
-            saver.add(new Record(UpdateType.REMOVE_POINTS, profileID, category));
             // check if the category already exists
             for (final Point point : points) {
                 if (point.getCategory().equalsIgnoreCase(category)) {
                     // if it does, add points to it
-                    saver.add(new Record(UpdateType.ADD_POINTS,
-                            profileID, category, String.valueOf(point.getCount() + count)));
+                    savePoints(category, point.getCount() + count);
                     point.addPoints(count);
                     BetonQuest.getInstance().callSyncBukkitEvent(new PlayerUpdatePointEvent(profile, category, point.getCount()));
                     return;
@@ -289,7 +286,7 @@ public class PlayerData implements TagData {
             }
             // if not then create new point category with given amount of points
             points.add(new Point(category, count));
-            saver.add(new Record(UpdateType.ADD_POINTS, profileID, category, String.valueOf(count)));
+            savePoints(category, count);
             BetonQuest.getInstance().callSyncBukkitEvent(new PlayerUpdatePointEvent(profile, category, count));
         }
     }
@@ -303,10 +300,9 @@ public class PlayerData implements TagData {
      */
     public void setPoints(final String category, final int count) {
         synchronized (points) {
-            saver.add(new Record(UpdateType.REMOVE_POINTS, profileID, category));
             points.removeIf(point -> point.getCategory().equalsIgnoreCase(category));
             points.add(new Point(category, count));
-            saver.add(new Record(UpdateType.ADD_POINTS, profileID, category, String.valueOf(count)));
+            savePoints(category, count);
             BetonQuest.getInstance().callSyncBukkitEvent(new PlayerUpdatePointEvent(profile, category, count));
         }
     }
@@ -328,7 +324,6 @@ public class PlayerData implements TagData {
                 points.remove(pointToRemove);
                 BetonQuest.getInstance().callSyncBukkitEvent(new PlayerUpdatePointEvent(profile, category, 0));
             }
-            saver.add(new Record(UpdateType.REMOVE_POINTS, profileID, category));
         }
     }
 
@@ -509,14 +504,22 @@ public class PlayerData implements TagData {
         refreshBackpack(backpack);
     }
 
+    /** Persists one points replacement as a single transaction. */
+    private void savePoints(final String category, final int count) {
+        saver.save(List.of(new Record(UpdateType.REMOVE_POINTS, profileID, category),
+                new Record(UpdateType.ADD_POINTS, profileID, category, String.valueOf(count))));
+    }
+
     private void refreshBackpack(final List<ItemStack> backpack) {
         // quite expensive, should be changed
-        saver.add(new Record(UpdateType.DELETE_BACKPACK, profileID));
+        final List<Record> records = new ArrayList<>();
+        records.add(new Record(UpdateType.DELETE_BACKPACK, profileID));
         for (final ItemStack itemStack : backpack) {
             final String instruction = QuestItem.itemToString(itemStack);
             final String newAmount = String.valueOf(itemStack.getAmount());
-            saver.add(new Record(UpdateType.ADD_BACKPACK, profileID, instruction, newAmount));
+            records.add(new Record(UpdateType.ADD_BACKPACK, profileID, instruction, newAmount));
         }
+        saver.save(records);
     }
 
     /**

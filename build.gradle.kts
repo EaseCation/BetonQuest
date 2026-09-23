@@ -139,6 +139,7 @@ dependencies {
     testImplementation("org.mockito:mockito-core:5.14.2")
     testImplementation("org.mockito:mockito-junit-jupiter:5.14.2")
     testRuntimeOnly("org.xerial:sqlite-jdbc:3.46.1.3")
+    testRuntimeOnly("com.mysql:mysql-connector-j:9.6.0")
     testImplementation("io.papermc.paper:paper-api:1.18.2-R0.1-SNAPSHOT") {
         exclude(group = "junit", module = "junit")
     }

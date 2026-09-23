@@ -138,21 +138,24 @@ public class GlobalData implements TagData {
      * @param category global_points will be added to this category
      * @param count    how much global_points will be added (or subtracted if negative)
      */
+    private void savePoints(final String category, final int count) {
+        saver.save(List.of(new Record(UpdateType.REMOVE_GLOBAL_POINTS, category),
+                new Record(UpdateType.ADD_GLOBAL_POINTS, category, String.valueOf(count))));
+    }
+
     public void modifyPoints(final String category, final int count) {
-        saver.add(new Record(UpdateType.REMOVE_GLOBAL_POINTS, category));
         // check if the category already exists
         for (final Point point : globalPoints) {
             if (point.getCategory().equalsIgnoreCase(category)) {
                 // if it does, add global_points to it
-                saver.add(new Record(UpdateType.ADD_GLOBAL_POINTS,
-                        category, String.valueOf(point.getCount() + count)));
+                savePoints(category, point.getCount() + count);
                 point.addPoints(count);
                 return;
             }
         }
         // if not then create new point category with given amount of global_points
         globalPoints.add(new Point(category, count));
-        saver.add(new Record(UpdateType.ADD_GLOBAL_POINTS, category, String.valueOf(count)));
+        savePoints(category, count);
     }
 
     /**
@@ -163,10 +166,9 @@ public class GlobalData implements TagData {
      * @param count    how much global_points will be set
      */
     public void setPoints(final String category, final int count) {
-        saver.add(new Record(UpdateType.REMOVE_GLOBAL_POINTS, category));
         globalPoints.removeIf(point -> point.getCategory().equalsIgnoreCase(category));
         globalPoints.add(new Point(category, count));
-        saver.add(new Record(UpdateType.ADD_GLOBAL_POINTS, category, String.valueOf(count)));
+        savePoints(category, count);
     }
 
     /**

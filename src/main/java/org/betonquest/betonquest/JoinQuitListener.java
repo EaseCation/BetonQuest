@@ -20,6 +20,8 @@ import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.player.PlayerResourcePackStatusEvent;
 
+import java.util.concurrent.TimeUnit;
+
 /**
  * Listener which handles data loading/saving when players are joining/quitting.
  */
@@ -51,8 +53,17 @@ public class JoinQuitListener implements Listener {
         if (event.getLoginResult() != Result.ALLOWED) {
             return;
         }
-        final Profile profile = PlayerConverter.getID(Bukkit.getOfflinePlayer(event.getUniqueId()));
-        betonQuest.putPlayerData(profile, new PlayerData(profile));
+        try {
+            // A quick reconnect must not load an older profile while its logout writes are still queued.
+            betonQuest.getSaver().checkpoint(event.getUniqueId().toString()).get(5, TimeUnit.SECONDS);
+            final Profile profile = PlayerConverter.getID(Bukkit.getOfflinePlayer(event.getUniqueId()));
+            betonQuest.getSaver().checkpoint(profile.getProfileUUID().toString()).get(5, TimeUnit.SECONDS);
+            betonQuest.putPlayerData(profile, new PlayerData(profile));
+        } catch (final Exception failure) {
+            if (failure instanceof InterruptedException) Thread.currentThread().interrupt();
+            loggerFactory.create(JoinQuitListener.class).error("Could not confirm quest data before login for " + event.getUniqueId(), failure);
+            event.disallow(Result.KICK_OTHER, "任务数据暂时无法确认，请稍后重新连接。");
+        }
     }
 
     @EventHandler(ignoreCancelled = true)

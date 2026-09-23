@@ -1,6 +1,8 @@
 package org.betonquest.betonquest.database;
 
 import java.util.Arrays;
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
 
 /**
  * The saver is used to save data via records into the database. Implementations should be thread save and must document
@@ -13,6 +15,12 @@ public interface Saver {
      * @param rec Record to save
      */
     void add(Record rec);
+
+    /** Saves one logical replacement atomically, rather than separate delete and insert operations. */
+    CompletableFuture<Void> save(List<Record> records);
+
+    /** Retries retained writes and confirms preceding changes for a profile; queueing is not durable success. */
+    CompletableFuture<Void> checkpoint(String profileID);
 
     /**
      * Ends this saver's job, letting it save all remaining data.
@@ -33,6 +41,11 @@ public interface Saver {
         public Record(final UpdateType type, final String... args) {
             this.type = type;
             this.args = Arrays.copyOf(args, args.length);
+        }
+
+        @Override
+        public String[] args() {
+            return Arrays.copyOf(args, args.length);
         }
     }
 }

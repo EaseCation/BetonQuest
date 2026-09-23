@@ -119,7 +119,7 @@ public class Connector {
             }
             statement.executeUpdate();
         } catch (final SQLException e) {
-            log.error("There was an exception with SQL", e);
+            throw new IllegalStateException("Database update was not confirmed", e);
         }
     }
 

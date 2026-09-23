@@ -9,6 +9,8 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
+import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.SortedMap;
@@ -86,6 +88,48 @@ public abstract class Database {
 
     protected abstract Connection openConnection() throws SQLException;
 
+    /** Opens a caller-owned connection for acknowledged content operations. */
+    public final Connection openIndependentConnection() throws SQLException {
+        return Objects.requireNonNull(openConnection(), "Database connection unavailable");
+    }
+
+    /** @return configured prefix for extension tables */
+    public final String getTablePrefix() { return prefix; }
+
+    /**
+     * Commits a content update and its operation ID together. Retrying a lost commit response with the
+     * same ID never replays SQL. Receipts confirm storage operations; they do not own quest progression.
+     */
+    public final void saveRecords(final String operation, final List<Saver.Record> records) throws SQLException {
+        try (Connection connection = openIndependentConnection()) {
+            connection.setAutoCommit(false);
+            try {
+                try (PreparedStatement receipt = connection.prepareStatement("INSERT INTO " + prefix
+                        + "save_receipts (operation_id, created_at) VALUES (?, ?)")) {
+                    receipt.setString(1, operation);
+                    receipt.setLong(2, System.currentTimeMillis());
+                    receipt.executeUpdate();
+                }
+                for (final Saver.Record record : records) {
+                    try (PreparedStatement statement = connection.prepareStatement(record.type().createSql(prefix))) {
+                        final String[] args = record.args();
+                        for (int index = 0; index < args.length; index++) statement.setString(index + 1, args[index]);
+                        statement.executeUpdate();
+                    }
+                }
+                connection.commit();
+            } catch (SQLException | RuntimeException failure) {
+                try { connection.rollback(); } catch (SQLException rollback) { failure.addSuppressed(rollback); }
+                try (Connection verify = openIndependentConnection(); PreparedStatement receipt = verify.prepareStatement(
+                        "SELECT operation_id FROM " + prefix + "save_receipts WHERE operation_id = ?")) {
+                    receipt.setString(1, operation);
+                    try (ResultSet rows = receipt.executeQuery()) { if (rows.next()) return; }
+                } catch (SQLException verification) { failure.addSuppressed(verification); }
+                throw failure;
+            }
+        }
+    }
+
     public void closeConnection() {
         if (con != null) {
             try {
@@ -108,6 +152,12 @@ public abstract class Database {
                 final DatabaseUpdate migration = migrations.remove(key);
                 migration.executeUpdate(getConnection());
                 markMigrationExecuted(getConnection(), key);
+            }
+            try (Statement statement = getConnection().createStatement()) {
+                statement.executeUpdate("CREATE TABLE IF NOT EXISTS " + prefix
+                        + "save_receipts (operation_id VARCHAR(36) PRIMARY KEY, created_at BIGINT NOT NULL)");
+                statement.executeUpdate("DELETE FROM " + prefix + "save_receipts WHERE created_at < "
+                        + (System.currentTimeMillis() - 7L * 24 * 60 * 60 * 1000));
             }
         } catch (final SQLException sqlException) {
             log.error("There was an exception with SQL while creating the database tables!", sqlException);
