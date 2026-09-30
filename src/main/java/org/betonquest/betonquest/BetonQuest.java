@@ -287,6 +287,11 @@ public class BetonQuest extends JavaPlugin {
         instance.questRegistry.events().executeDurable(profile, eventID);
     }
 
+    /** Completes only after every asynchronous durable effect in this event has been confirmed. */
+    public static java.util.concurrent.CompletionStage<Void> durableEventAsync(@Nullable final Profile profile, final EventID eventID) {
+        return instance.questRegistry.events().executeDurableAsync(profile, eventID);
+    }
+
     /**
      * Creates new objective for given player.
      *

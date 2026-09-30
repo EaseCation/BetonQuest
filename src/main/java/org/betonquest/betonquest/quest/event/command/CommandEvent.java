@@ -49,12 +49,47 @@ public class CommandEvent implements NullableEvent {
     @SuppressWarnings("PMD.AvoidCatchingGenericException")
     @Override
     public void execute(@Nullable final Profile profile) throws QuestRuntimeException {
+        final java.util.concurrent.CompletionStage<Void> completion = dispatchNext(profile, 0);
+        final java.util.concurrent.atomic.AtomicReference<Throwable> immediateFailure = new java.util.concurrent.atomic.AtomicReference<>();
+        completion.whenComplete((ignored, failure) -> immediateFailure.set(failure));
+        if (immediateFailure.get() != null) throw new QuestRuntimeException("Confirmed command failed", immediateFailure.get());
+        org.betonquest.betonquest.quest.registry.processor.EventContinuation.observe(completion);
+    }
+
+    private java.util.concurrent.CompletionStage<Void> dispatchNext(@Nullable final Profile profile, final int index) {
+        if (index >= commands.size()) return java.util.concurrent.CompletableFuture.completedFuture(null);
         try {
-            for (final VariableString command : commands) {
-                server.dispatchCommand(silentSender, command.getValue(profile));
+            final String command = commands.get(index).getValue(profile);
+            final Runnable dispatch = () -> {
+                if (!server.dispatchCommand(silentSender, command)) throw new IllegalStateException("Command was not handled: " + command);
+            };
+            java.util.concurrent.CompletionStage<Void> confirmation;
+            final org.bukkit.plugin.Plugin home = server.getPluginManager().getPlugin("SuperiorSkyblock2");
+            if (home != null && home.isEnabled()) {
+                final Class<?> contract = home.getClass().getClassLoader().loadClass(
+                        "com.bgsoftware.superiorskyblock.api.service.home.HomeCommandConfirmation");
+                @SuppressWarnings("unchecked") final java.util.concurrent.CompletionStage<Void> captured =
+                        (java.util.concurrent.CompletionStage<Void>) contract.getMethod("capture", Runnable.class, boolean.class)
+                                .invoke(null, dispatch, org.betonquest.betonquest.quest.registry.processor.EventContinuation.requiresSynchronousCompletion());
+                confirmation = captured;
+            } else {
+                if (command.toLowerCase(java.util.Locale.ROOT).matches("/?(?:is|island|islands|ss2)\\s+admin\\s+home\\s+.*"))
+                    throw new IllegalStateException("Home command authority is unavailable");
+                dispatch.run();
+                confirmation = java.util.concurrent.CompletableFuture.completedFuture(null);
             }
-        } catch (final RuntimeException exception) {
-            throw new QuestRuntimeException("Unhandled exception executing command: " + exception.getMessage(), exception);
+            return confirmation.thenCompose(ignored -> {
+                final java.util.concurrent.CompletableFuture<Void> next = new java.util.concurrent.CompletableFuture<>();
+                final Runnable continuation = () -> dispatchNext(profile, index + 1).whenComplete((result, failure) -> {
+                    if (failure == null) next.complete(null); else next.completeExceptionally(failure);
+                });
+                if (server.isPrimaryThread()) continuation.run();
+                else server.getScheduler().runTask(org.betonquest.betonquest.BetonQuest.getInstance(), continuation);
+                return next;
+            });
+        } catch (final Exception exception) {
+            return java.util.concurrent.CompletableFuture.failedFuture(new QuestRuntimeException(
+                    "Unhandled exception executing confirmed command: " + exception.getMessage(), exception));
         }
     }
 }
