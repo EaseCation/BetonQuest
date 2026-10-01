@@ -1,8 +1,17 @@
 package org.betonquest.betonquest.database;
 
 import org.betonquest.betonquest.api.logger.BetonQuestLogger;
+import org.betonquest.betonquest.BetonQuest;
+import org.betonquest.betonquest.Instruction;
+import org.betonquest.betonquest.Journal;
+import org.betonquest.betonquest.api.CountingObjective;
+import org.betonquest.betonquest.api.Objective;
+import org.betonquest.betonquest.api.profiles.Profile;
+import org.bukkit.Bukkit;
+import org.bukkit.plugin.PluginManager;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.mockito.MockedStatic;
 
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Proxy;
@@ -18,10 +27,102 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.*;
 
 class SaveTransactionTest {
     @TempDir Path directory;
+
+    private static final String PROFILE_ID = "1b8616bb-babd-36a3-82b8-53fea4737fe7";
+    private static final String OBJECTIVE_ID = "skyloop_mining.mining_rec_r1_04";
+
+    @Test void emptyCountingDataResumesWithoutPoisoningLoginCheckpoint() throws Exception {
+        final TestDatabase db = objectiveDatabase("");
+        final AsyncSaver saver = new AsyncSaver(mock(BetonQuestLogger.class), db);
+        saver.start();
+        try (var singleton = mockStatic(BetonQuest.class); var bukkit = mockStatic(Bukkit.class)) {
+            final Profile profile = questRuntime(singleton, bukkit, saver);
+            final RecoveryObjective objective = new RecoveryObjective(objectiveInstruction());
+            objective.resumeObjectiveForPlayer(profile, "");
+            assertTrue(objective.containsPlayer(profile), "Subclass fields must be ready before normalized data is saved");
+            saver.checkpoint(PROFILE_ID).get(3, TimeUnit.SECONDS);
+            assertEquals("1/1/1/0;ready", objective.getData(profile));
+            assertEquals("1/1/1/0;ready", objectiveRow(db));
+        } finally { saver.end(); db.closeConnection(); }
+    }
+
+    @Test void newObjectiveReplacesStaleRowWithoutPoisoningLoginCheckpoint() throws Exception {
+        final TestDatabase db = objectiveDatabase("stale");
+        final AsyncSaver saver = new AsyncSaver(mock(BetonQuestLogger.class), db);
+        saver.start();
+        try (var singleton = mockStatic(BetonQuest.class); var bukkit = mockStatic(Bukkit.class)) {
+            final Profile profile = questRuntime(singleton, bukkit, saver);
+            final RecoveryObjective objective = new RecoveryObjective(objectiveInstruction());
+            // Login provisioning may start an objective whose durable row still exists but was never resumed.
+            objective.newPlayer(profile);
+            saver.checkpoint(PROFILE_ID).get(3, TimeUnit.SECONDS);
+            assertTrue(objective.containsPlayer(profile));
+            assertEquals("10", objectiveRow(db));
+        } finally { saver.end(); db.closeConnection(); }
+    }
+
+    private TestDatabase objectiveDatabase(final String storedInstruction) throws Exception {
+        final TestDatabase db = database();
+        try (var connection = db.openIndependentConnection(); var statement = connection.createStatement()) {
+            statement.execute("CREATE TABLE " + db.getTablePrefix()
+                    + "objectives(profileID VARCHAR(36), objective VARCHAR(510), instructions TEXT NOT NULL, PRIMARY KEY(profileID,objective))");
+        }
+        db.saveRecords("existing-objective", List.of(new Saver.Record(UpdateType.ADD_OBJECTIVES, PROFILE_ID, OBJECTIVE_ID, storedInstruction)));
+        return db;
+    }
+
+    private Profile questRuntime(final MockedStatic<BetonQuest> singleton, final MockedStatic<Bukkit> bukkit, final AsyncSaver saver) {
+        final BetonQuest plugin = mock(BetonQuest.class, RETURNS_DEEP_STUBS);
+        singleton.when(BetonQuest::getInstance).thenReturn(plugin);
+        when(plugin.getSaver()).thenReturn(saver);
+        bukkit.when(Bukkit::getPluginManager).thenReturn(mock(PluginManager.class));
+        final Profile profile = mock(Profile.class);
+        when(profile.getProfileUUID()).thenReturn(java.util.UUID.fromString(PROFILE_ID));
+        final PlayerData player = mock(PlayerData.class);
+        when(player.getJournal()).thenReturn(mock(Journal.class));
+        when(plugin.getPlayerData(profile)).thenReturn(player);
+        return profile;
+    }
+
+    private Instruction objectiveInstruction() throws Exception {
+        final Instruction instruction = mock(Instruction.class, RETURNS_DEEP_STUBS);
+        when(instruction.getArray(any())).thenReturn(new String[0]);
+        when(instruction.getID().getFullID()).thenReturn(OBJECTIVE_ID);
+        return instruction;
+    }
+
+    private String objectiveRow(final TestDatabase db) throws Exception {
+        try (var connection = db.openIndependentConnection(); var statement = connection.prepareStatement(
+                "SELECT instructions FROM " + db.getTablePrefix() + "objectives WHERE profileID=? AND objective=?")) {
+            statement.setString(1, PROFILE_ID);
+            statement.setString(2, OBJECTIVE_ID);
+            try (var rows = statement.executeQuery()) { assertTrue(rows.next()); return rows.getString(1); }
+        }
+    }
+
+    private static final class RecoveryObjective extends Objective {
+        RecoveryObjective(Instruction instruction) throws org.betonquest.betonquest.exceptions.InstructionParseException {
+            super(instruction);
+            template = ExtendedCountingData.class;
+        }
+        @Override public void start() { }
+        @Override public void stop() { }
+        @Override public String getDefaultDataInstruction() { return "10"; }
+        @Override public String getProperty(String name, Profile profile) { return ""; }
+    }
+
+    /** Models ContentActivityObjective's extension fields, initialized only after the counting constructor. */
+    public static final class ExtendedCountingData extends CountingObjective.CountingData {
+        private final List<String> operations = List.of("ready");
+        public ExtendedCountingData(String instruction, Profile profile, String objective) {
+            super(instruction, profile, objective);
+        }
+        @Override public String toString() { return super.toString() + ";" + String.join(",", operations); }
+    }
 
     @Test void replacementRollsBackWhenInsertFails() throws Exception {
         final TestDatabase db = database();

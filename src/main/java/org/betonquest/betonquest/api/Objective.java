@@ -305,14 +305,18 @@ public abstract class Objective {
 
     /**
      * Adds this new objective to the profile. Also updates the database with the
-     * objective.
+     * objective, replacing a stored row that could not be resumed so it cannot block later saves.
      *
      * @param profile the {@link Profile} for which the objective is to be added
      */
     public final void newPlayer(final Profile profile) {
         final String defaultInstruction = getDefaultDataInstruction(profile);
         createObjectiveForPlayer(profile, defaultInstruction);
-        BetonQuest.getInstance().getPlayerData(profile).addObjToDB(instruction.getID().getFullID(), defaultInstruction);
+        final String profileID = profile.getProfileUUID().toString();
+        final String objectiveID = instruction.getID().getFullID();
+        BetonQuest.getInstance().getSaver().save(java.util.List.of(
+                new Saver.Record(UpdateType.REMOVE_OBJECTIVES, profileID, objectiveID),
+                new Saver.Record(UpdateType.ADD_OBJECTIVES, profileID, objectiveID, defaultInstruction)));
     }
 
     /**
@@ -354,12 +358,28 @@ public abstract class Objective {
     }
 
     private Optional<ObjectiveData> createObjectiveData(final Profile profile, final String instructionString) {
+        final ObjectiveData data;
         try {
-            return Optional.of(constructObjectiveDataUnsafe(profile, instructionString));
+            data = constructObjectiveDataUnsafe(profile, instructionString);
         } catch (final NoSuchMethodException | InstantiationException | IllegalAccessException
                        | InvocationTargetException exception) {
             handleObjectiveDataConstructionError(profile, exception);
             return Optional.empty();
+        }
+        persistNormalizedData(profile, data);
+        return Optional.of(data);
+    }
+
+    private void persistNormalizedData(final Profile profile, final ObjectiveData data) {
+        if (!data.persistAfterLoad) {
+            return;
+        }
+        data.persistAfterLoad = false;
+        try {
+            data.update();
+        } catch (final RuntimeException exception) {
+            log.warn(instruction.getPackage(), "Could not persist normalized " + this.instruction.getID().getFullID()
+                    + " objective data for " + profile + ": " + exception.getMessage(), exception);
         }
     }
 
@@ -579,6 +599,11 @@ public abstract class Objective {
         protected String objID;
 
         /**
+         * Whether the loaded data was normalized and must be written back once construction finished.
+         */
+        private boolean persistAfterLoad;
+
+        /**
          * The ObjectiveData object is loaded from the database and the
          * constructor needs to parse the data in the instruction, so it can be
          * later retrieved and modified by your objective code.
@@ -627,6 +652,15 @@ public abstract class Objective {
                     new Saver.Record(UpdateType.REMOVE_OBJECTIVES, profile.getProfileUUID().toString(), objID),
                     new Saver.Record(UpdateType.ADD_OBJECTIVES, profile.getProfileUUID().toString(), objID, toString())));
             notifyDataUpdate();
+        }
+
+        /**
+         * Requests that normalized data is written back after the object is fully constructed.
+         * Constructors must use this instead of {@link #update()}, because subclass fields used by
+         * {@link #toString()} are not initialized while a superclass constructor runs.
+         */
+        protected final void persistAfterLoad() {
+            this.persistAfterLoad = true;
         }
 
         /** Publishes an already persisted data change without queueing another database write. */

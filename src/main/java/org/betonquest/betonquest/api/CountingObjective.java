@@ -12,7 +12,6 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.Locale;
 import java.util.Objects;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * An objective that is not completed by doing some action just once, but multiple times. It provides common properties
@@ -224,14 +223,10 @@ public abstract class CountingObjective extends Objective {
             final String[] instructionParts = countingInstruction.split("/");
             switch (instructionParts.length) {
                 case 1:
-                    final AtomicBoolean dirty = new AtomicBoolean(false);
-                    targetAmount = getTargetAmount(countingInstruction, dirty);
+                    targetAmount = getTargetAmount(countingInstruction);
                     amountLeft = targetAmount;
                     directionFactor = amountLeft < 0 ? -1 : 1;
                     lastChange = 0;
-                    if (dirty.get()) {
-                        update();
-                    }
                     break;
                 case 4:
                     targetAmount = Integer.parseInt(instructionParts[0]);
@@ -244,7 +239,7 @@ public abstract class CountingObjective extends Objective {
             }
         }
 
-        private int getTargetAmount(final String countingInstruction, final AtomicBoolean dirty) {
+        private int getTargetAmount(final String countingInstruction) {
             try {
                 return Integer.parseInt(countingInstruction);
             } catch (final NumberFormatException e) {
@@ -253,7 +248,7 @@ public abstract class CountingObjective extends Objective {
                         + " The objective will be reset to an amount of 1."
                         + " This is normally the previous amount and can be ignored.");
                 log.debug("Invalid instruction string: '" + instruction + "'");
-                dirty.set(true);
+                persistAfterLoad();
                 return 1;
             }
         }
