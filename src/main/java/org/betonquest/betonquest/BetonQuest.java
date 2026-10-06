@@ -463,25 +463,34 @@ public class BetonQuest extends JavaPlugin {
         Config.setup(this, config);
         Notify.load(config);
 
-        final boolean mySQLEnabled = config.getBoolean("mysql.enabled", true);
-        if (mySQLEnabled) {
-            log.debug("Connecting to MySQL database");
-            this.database = new MySQL(loggerFactory.create(MySQL.class, "Database"), this, config.getString("mysql.host"),
-                    config.getString("mysql.port"),
-                    config.getString("mysql.base"),
-                    config.getString("mysql.user"),
-                    config.getString("mysql.pass"));
-            if (database.getConnection() != null) {
-                isMySQLUsed = true;
-                log.info("Successfully connected to MySQL database!");
+        final String storageType = config.getString("database.type", "").toUpperCase(java.util.Locale.ROOT);
+        isMySQLUsed = false;
+        if ("POSTGRESQL".equals(storageType)) {
+            this.database = new org.betonquest.betonquest.database.PostgreSQL(
+                    loggerFactory.create(org.betonquest.betonquest.database.PostgreSQL.class, "Database"), this);
+            database.getConnection();
+            log.info("Successfully connected to PostgreSQL database!");
+        } else {
+            if (!java.util.Set.of("MYSQL", "SQLITE").contains(storageType)) {
+                throw new IllegalArgumentException("database.type must explicitly select MYSQL, SQLITE or POSTGRESQL; automatic fallback is disabled");
             }
-        }
-        if (!mySQLEnabled || !isMySQLUsed) {
-            this.database = new SQLite(loggerFactory.create(SQLite.class, "Database"), this, "database.db");
+            final boolean mySQLEnabled = "MYSQL".equals(storageType);
             if (mySQLEnabled) {
-                log.warn("No connection to the mySQL Database! Using SQLite for storing data as fallback!");
-            } else {
-                log.info("Using SQLite for storing data!");
+                log.debug("Connecting to MySQL database");
+                this.database = new MySQL(loggerFactory.create(MySQL.class, "Database"), this, config.getString("mysql.host"),
+                        config.getString("mysql.port"),
+                        config.getString("mysql.base"),
+                        config.getString("mysql.user"),
+                        config.getString("mysql.pass"));
+                if (database.getConnection() != null) {
+                    isMySQLUsed = true;
+                    log.info("Successfully connected to MySQL database!");
+                }
+            }
+            if (!mySQLEnabled) {
+                this.database = new SQLite(loggerFactory.create(SQLite.class, "Database"), this, "database.db");
+                database.getConnection();
+                log.info("Using explicitly configured SQLite database");
             }
         }
 

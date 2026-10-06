@@ -1,4 +1,11 @@
 configVersion: ""
+# Select the backend explicitly. A connection failure never selects another backend.
+database:
+  type: POSTGRESQL
+postgresql:
+  url: ''
+  user: ''
+  password: ''
 mysql:
   enabled: false
   host: ''

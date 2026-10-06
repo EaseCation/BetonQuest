@@ -1,0 +1,145 @@
+package org.betonquest.betonquest.database;
+
+import org.betonquest.betonquest.BetonQuest;
+import org.betonquest.betonquest.api.logger.BetonQuestLogger;
+import org.bukkit.plugin.Plugin;
+
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.SQLException;
+import java.sql.Statement;
+import java.util.HashSet;
+import java.util.Properties;
+import java.util.Set;
+import java.util.SortedMap;
+import java.util.TreeMap;
+
+/**
+ * PostgreSQL 原生后端。只初始化 PostgreSQL 自身的表结构，不自动导入或删除 SQLite 数据。
+ * 配置或迁移失败会关闭启动流程，不回退到本地 SQLite，避免出现两份数据权威。
+ */
+public final class PostgreSQL extends Database {
+    private final String url;
+    private final Properties properties;
+
+    /** 从显式 PostgreSQL 配置建立连接，沿用原表前缀和默认档案名。 */
+    public PostgreSQL(final BetonQuestLogger log, final BetonQuest plugin) {
+        this(log, plugin, plugin.getPluginConfig().getString("postgresql.url", ""),
+                plugin.getPluginConfig().getString("postgresql.user", ""),
+                plugin.getPluginConfig().getString("postgresql.password", ""),
+                plugin.getPluginConfig().getString("mysql.prefix", "betonquest_"),
+                plugin.getPluginConfig().getString("profiles.initial_name", "default"));
+    }
+
+    /** 显式参数入口供隔离数据库验证使用；不依赖 Bukkit 全局单例。 */
+    PostgreSQL(final BetonQuestLogger log, final Plugin plugin, final String url, final String user,
+               final String password, final String prefix, final String initialProfile) {
+        super(log, plugin, prefix, initialProfile);
+        if (url == null || !url.startsWith("jdbc:postgresql:")) {
+            throw new IllegalArgumentException("PostgreSQL requires an explicit jdbc:postgresql URL");
+        }
+        if (prefix == null || !prefix.matches("[a-z_][a-z0-9_]*|")) {
+            throw new IllegalArgumentException("PostgreSQL table prefix must be a lowercase SQL identifier");
+        }
+        this.url = url;
+        this.properties = new Properties();
+        properties.setProperty("user", user);
+        properties.setProperty("password", password);
+        properties.setProperty("connectTimeout", "5");
+        properties.setProperty("socketTimeout", "30");
+        properties.setProperty("ApplicationName", "BetonQuest");
+        // Existing Saver records bind strings; let PostgreSQL infer numeric/timestamp parameter types.
+        properties.setProperty("stringtype", "unspecified");
+    }
+
+    @Override
+    public Connection openConnection() throws SQLException {
+        try {
+            Class.forName("org.postgresql.Driver");
+        } catch (ClassNotFoundException error) {
+            throw new SQLException("Bundled PostgreSQL JDBC driver is unavailable", error);
+        }
+        return DriverManager.getConnection(url, properties);
+    }
+
+    @Override
+    protected boolean failOnMigrationError() {
+        return true;
+    }
+
+    @Override
+    public boolean usesFormattedJournalDates() {
+        return true;
+    }
+
+    @Override
+    protected String selectForUpdateClause() {
+        return " FOR UPDATE";
+    }
+
+    @Override
+    protected SortedMap<MigrationKey, DatabaseUpdate> getMigrations() {
+        final SortedMap<MigrationKey, DatabaseUpdate> migrations = new TreeMap<>();
+        migrations.put(new MigrationKey("postgresql", 1), this::createPostgresSchema);
+        return migrations;
+    }
+
+    @Override
+    protected Set<MigrationKey> queryExecutedMigrations(final Connection connection) throws SQLException {
+        final Set<MigrationKey> executed = new HashSet<>();
+        try (Statement statement = connection.createStatement()) {
+            statement.executeUpdate("CREATE TABLE IF NOT EXISTS " + prefix + "migration (namespace VARCHAR(63) NOT NULL, "
+                    + "migration_id INTEGER NOT NULL, time TIMESTAMP DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(namespace,migration_id))");
+            try (var rows = statement.executeQuery("SELECT namespace,migration_id FROM " + prefix + "migration")) {
+                while (rows.next()) executed.add(new MigrationKey(rows.getString(1), rows.getInt(2)));
+            }
+        }
+        return executed;
+    }
+
+    @Override
+    protected void markMigrationExecuted(final Connection connection, final MigrationKey key) throws SQLException {
+        try (var statement = connection.prepareStatement("INSERT INTO " + prefix + "migration(namespace,migration_id) VALUES (?,?)")) {
+            statement.setString(1, key.namespace());
+            statement.setInt(2, key.version());
+            statement.executeUpdate();
+        }
+    }
+
+    /** 创建当前规范结构；幂等执行，已有表不会被删除或重新编号。 */
+    private void createPostgresSchema(final Connection connection) throws SQLException {
+        final String profileReference = " REFERENCES " + prefix + "profile(profileID) ON DELETE CASCADE";
+        final String[] definitions = {
+            "profile (profileID CHAR(36) PRIMARY KEY NOT NULL)",
+            "backpack (id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, profileID CHAR(36) NOT NULL"
+                    + profileReference + ", instruction TEXT NOT NULL, amount INTEGER NOT NULL)",
+            "journal (id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, profileID CHAR(36) NOT NULL"
+                    + profileReference + ", pointer VARCHAR(255) NOT NULL, date TIMESTAMP NOT NULL)",
+            "objectives (profileID CHAR(36) NOT NULL" + profileReference
+                    + ", objective VARCHAR(510) NOT NULL, instructions VARCHAR(2046) NOT NULL, PRIMARY KEY(profileID,objective))",
+            "points (profileID CHAR(36) NOT NULL" + profileReference
+                    + ", category VARCHAR(255) NOT NULL, count INTEGER NOT NULL, PRIMARY KEY(profileID,category))",
+            "tags (profileID CHAR(36) NOT NULL" + profileReference + ", tag TEXT NOT NULL, PRIMARY KEY(profileID,tag))",
+            "player (playerID CHAR(36) PRIMARY KEY NOT NULL, language VARCHAR(16) NOT NULL, conversation VARCHAR(510), "
+                    + "active_profile CHAR(36) NOT NULL REFERENCES " + prefix + "profile(profileID) ON DELETE RESTRICT)",
+            "global_tags (tag VARCHAR(510) PRIMARY KEY NOT NULL)",
+            "global_points (category VARCHAR(255) PRIMARY KEY NOT NULL, count INTEGER NOT NULL)",
+            "player_profile (playerID CHAR(36) NOT NULL REFERENCES " + prefix + "player(playerID) ON DELETE CASCADE, "
+                    + "profileID CHAR(36) NOT NULL" + profileReference
+                    + ", name VARCHAR(63) NOT NULL, PRIMARY KEY(playerID,profileID), UNIQUE(playerID,name))",
+            "asset_sequence_cursor (profileID CHAR(36) NOT NULL, objective VARCHAR(510) NOT NULL, "
+                    + "asset_sequence BIGINT NOT NULL, PRIMARY KEY(profileID,objective))"
+        };
+        final boolean previous = connection.getAutoCommit();
+        connection.setAutoCommit(false);
+        try (Statement statement = connection.createStatement()) {
+            for (String definition : definitions) statement.executeUpdate("CREATE TABLE IF NOT EXISTS " + prefix + definition);
+            connection.commit();
+        } catch (SQLException error) {
+            connection.rollback();
+            throw error;
+        } finally {
+            connection.setAutoCommit(previous);
+        }
+    }
+}

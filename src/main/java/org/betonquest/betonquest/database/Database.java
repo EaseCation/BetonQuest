@@ -68,6 +68,7 @@ public abstract class Database {
             }
         } catch (final SQLException e) {
             log.error("Failed opening database connection!", e);
+            throw new IllegalStateException("Configured database is unavailable", e);
         }
         if (con == null) {
             throw new IllegalStateException("Not able to create a database connection!");
@@ -161,7 +162,20 @@ public abstract class Database {
             }
         } catch (final SQLException sqlException) {
             log.error("There was an exception with SQL while creating the database tables!", sqlException);
+            if (failOnMigrationError()) {
+                throw new IllegalStateException("Configured database schema could not be confirmed", sqlException);
+            }
         }
+    }
+
+    /** 后端是否要求结构迁移失败时终止启用，而不是继续使用不完整表结构。 */
+    protected boolean failOnMigrationError() {
+        return true;
+    }
+
+    /** 日志日期是否按 SQL TIMESTAMP 写入；SQLite 沿用原有毫秒时间戳。 */
+    public boolean usesFormattedJournalDates() {
+        return false;
     }
 
     /**

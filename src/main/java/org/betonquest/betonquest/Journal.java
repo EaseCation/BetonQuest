@@ -141,7 +141,7 @@ public class Journal {
         pointers.add(pointer);
         // SQLite doesn't accept formatted date and MySQL doesn't accept numeric
         // timestamp
-        final String date = betonQuest.isMySQLUsed()
+        final String date = betonQuest.getDB().usesFormattedJournalDates()
                 ? new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.ROOT).format(new Date(pointer.getTimestamp()))
                 : Long.toString(pointer.getTimestamp());
         betonQuest.getSaver()
@@ -158,7 +158,7 @@ public class Journal {
             if (pointer.getPointer().equalsIgnoreCase(pointerName)) {
                 final BetonQuest betonQuest = BetonQuest.getInstance();
                 betonQuest.callSyncBukkitEvent(new PlayerJournalDeleteEvent(profile, this, pointer));
-                final String date = betonQuest.isMySQLUsed()
+                final String date = betonQuest.getDB().usesFormattedJournalDates()
                         ? new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.ROOT).format(new Date(pointer.getTimestamp()))
                         : Long.toString(pointer.getTimestamp());
                 betonQuest.getSaver()

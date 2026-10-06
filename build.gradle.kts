@@ -132,6 +132,7 @@ dependencies {
     implementation("org.json:json:20240303")
     implementation("com.cronutils:cron-utils:9.2.1")
     implementation("com.zaxxer:HikariCP:5.1.0")
+    implementation("org.postgresql:postgresql:42.7.13")
 
     // Tests are optional for the deploy pipeline (equivalent to Maven -DskipTests).
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
@@ -140,6 +141,8 @@ dependencies {
     testImplementation("org.mockito:mockito-junit-jupiter:5.14.2")
     testRuntimeOnly("org.xerial:sqlite-jdbc:3.46.1.3")
     testRuntimeOnly("com.mysql:mysql-connector-j:9.6.0")
+    testRuntimeOnly("org.apache.logging.log4j:log4j-api:3.0.0-beta2")
+    testRuntimeOnly("org.apache.logging.log4j:log4j-core:3.0.0-beta2")
     testImplementation("io.papermc.paper:paper-api:1.18.2-R0.1-SNAPSHOT") {
         exclude(group = "junit", module = "junit")
     }
@@ -213,6 +216,7 @@ tasks.shadowJar {
         include(dependency("io.papermc:paperlib"))
         include(dependency("com.cronutils:cron-utils"))
         include(dependency("com.zaxxer:HikariCP"))
+        include(dependency("org.postgresql:postgresql"))
         // transitive pieces commonly pulled by the above
         include(dependency("com.google.guava:failureaccess"))
         include(dependency("com.google.guava:listenablefuture"))
@@ -237,6 +241,7 @@ tasks.shadowJar {
     relocate("io.papermc.lib", "$relocatePrefix.io.papermc.lib")
     relocate("com.cronutils", "$relocatePrefix.com.cronutils")
     relocate("com.zaxxer.hikari", "$relocatePrefix.com.zaxxer.hikari")
+    relocate("org.postgresql", "$relocatePrefix.org.postgresql")
 
     mergeServiceFiles()
 }

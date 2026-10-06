@@ -78,6 +78,11 @@ public class MySQL extends Database {
     }
 
     @Override
+    public boolean usesFormattedJournalDates() {
+        return true;
+    }
+
+    @Override
     protected SortedMap<MigrationKey, DatabaseUpdate> getMigrations() {
         final SortedMap<MigrationKey, DatabaseUpdate> migrations = new TreeMap<>();
         migrations.put(new MigrationKey("betonquest", 1), this::migration1);
