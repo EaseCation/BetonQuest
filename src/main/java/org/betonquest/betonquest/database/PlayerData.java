@@ -87,6 +87,22 @@ public class PlayerData implements TagData {
         loadAllPlayerData();
     }
 
+    /** Creates a current state for a new connection without retaining its predecessor's Player or Journal. */
+    public PlayerData copyFor(final Profile replacement) {
+        if (!profile.getProfileUUID().equals(replacement.getProfileUUID())) throw new IllegalArgumentException("Different quest profile");
+        return new PlayerData(replacement, this);
+    }
+
+    private PlayerData(final Profile replacement, final PlayerData source) {
+        this.profile = replacement; this.profileID = replacement.getProfileUUID().toString();
+        tags.addAll(source.tags); entries.addAll(source.entries); objectives.putAll(source.objectives);
+        synchronized (source.points) { source.points.forEach(point -> points.add(new Point(point.getCategory(), point.getCount()))); }
+        source.backpack.forEach(item -> backpack.add(item.clone()));
+        profileLanguage = source.profileLanguage;
+        PlayerConversationState state = source.activeConversation;
+        activeConversation = state == null ? null : new PlayerConversationState(state.currentConversation(),state.currentOption(),state.center()==null?null:state.center().clone());
+    }
+
     /**
      * Loads all data for the profile and puts it in appropriate lists.
      */
@@ -304,6 +320,36 @@ public class PlayerData implements TagData {
             points.add(new Point(category, count));
             savePoints(category, count);
             BetonQuest.getInstance().callSyncBukkitEvent(new PlayerUpdatePointEvent(profile, category, count));
+        }
+    }
+
+    /**
+     * Deducts a stage cost and records its receipt in the same database transaction.
+     * Replay returns the current balance without deducting again. Callers must use the main thread;
+     * clampAtZero is only for migrating legacy accounts whose historical balance may be incomplete.
+     * The current debit is complete before the saver queues its atomic replacement.
+     */
+    public int subtractPointsOnce(final String category, final int cost, final String receiptTag,
+                                  final boolean clampAtZero) {
+        if (!org.bukkit.Bukkit.isPrimaryThread() || cost < 0 || receiptTag.isBlank()) {
+            throw new IllegalArgumentException("Invalid stage contribution debit");
+        }
+        synchronized (tags) {
+            synchronized (points) {
+                final int current = hasPointsFromCategory(category);
+                if (tags.contains(receiptTag)) return current;
+                if (!clampAtZero && current < cost) throw new IllegalStateException("Insufficient contribution");
+                final int remaining = (int) Math.max(0L, (long) current - cost);
+                saver.save(List.of(new Record(UpdateType.REMOVE_POINTS, profileID, category),
+                        new Record(UpdateType.ADD_POINTS, profileID, category, String.valueOf(remaining)),
+                        new Record(UpdateType.ADD_TAGS, profileID, receiptTag)));
+                points.removeIf(point -> point.getCategory().equalsIgnoreCase(category));
+                points.add(new Point(category, remaining));
+                tags.add(receiptTag);
+                BetonQuest.getInstance().callSyncBukkitEvent(new PlayerUpdatePointEvent(profile, category, remaining));
+                BetonQuest.getInstance().callSyncBukkitEvent(new PlayerTagAddEvent(profile, receiptTag));
+                return remaining;
+            }
         }
     }
 

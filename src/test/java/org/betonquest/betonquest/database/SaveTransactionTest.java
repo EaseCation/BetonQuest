@@ -218,6 +218,32 @@ class SaveTransactionTest {
         } finally { saver.end(); db.closeConnection(); }
     }
 
+    @Test void backgroundRecoveryNeedsNoNewGameplayActionAndSavesOnlyLatestPoints() throws Exception {
+        final TestDatabase db = database(); final AsyncSaver saver = new AsyncSaver(mock(BetonQuestLogger.class),db); saver.start();
+        try {
+            db.unavailable.set(true);
+            assertThrows(Exception.class,()->saver.save(List.of(new Saver.Record(UpdateType.ADD_POINTS,"p","contribution","100"))).get(3,TimeUnit.SECONDS));
+            assertThrows(Exception.class,()->saver.save(List.of(new Saver.Record(UpdateType.REMOVE_POINTS,"p","contribution"),new Saver.Record(UpdateType.ADD_POINTS,"p","contribution","275"))).get(3,TimeUnit.SECONDS));
+            assertTrue(saver.hasPending("p"));db.unavailable.set(false);
+            long end=System.nanoTime()+TimeUnit.SECONDS.toNanos(8);boolean saved=false;
+            while(System.nanoTime()<end) {
+                try { if(points(db,"p")==275) { saved=true;break; } } catch(AssertionError missing) { }
+                Thread.sleep(20);
+            }
+            assertTrue(saved,"Storage recovery must progress without a checkpoint or another player action");
+            assertEquals(275,points(db,"p"));
+        } finally { saver.end();db.closeConnection(); }
+    }
+
+    @Test void laterValidCurrentReplacementDoesNotRetryAnInvalidOldObject() throws Exception {
+        final TestDatabase db=database();final AsyncSaver saver=new AsyncSaver(mock(BetonQuestLogger.class),db);saver.start();
+        try {
+            assertThrows(Exception.class,()->saver.save(List.of(new Saver.Record(UpdateType.ADD_POINTS,"p","contribution",null))).get(3,TimeUnit.SECONDS));
+            saver.save(List.of(new Saver.Record(UpdateType.REMOVE_POINTS,"p","contribution"),new Saver.Record(UpdateType.ADD_POINTS,"p","contribution","42"))).get(3,TimeUnit.SECONDS);
+            assertEquals(42,points(db,"p"));saver.checkpoint("p").get(3,TimeUnit.SECONDS);
+        } finally { saver.end();db.closeConnection(); }
+    }
+
     private TestDatabase database() throws Exception {
         final TestDatabase db = new TestDatabase(System.getenv().getOrDefault("EC_SAVE_TEST_MYSQL_URL", "jdbc:sqlite:" + directory.resolve("quest.db")));
         db.createTables();

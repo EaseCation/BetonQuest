@@ -174,6 +174,23 @@ public class BetonQuest extends JavaPlugin {
     private static BetonQuest instance;
 
     private final Map<Profile, PlayerData> playerDataMap = new ConcurrentHashMap<>();
+    private final Map<java.util.UUID, PlayerData> reconnectData = new ConcurrentHashMap<>();
+
+    /** Reuse only state still waiting for storage; a healthy new read remains authoritative on later logins. */
+    public PlayerData loadPlayerDataForLogin(Profile profile) {
+        PlayerData previous = reconnectData.get(profile.getProfileUUID());
+        if (previous != null && getSaver().hasPending(profile.getProfileUUID().toString())) return previous.copyFor(profile);
+        reconnectData.remove(profile.getProfileUUID());
+        return new PlayerData(profile);
+    }
+
+    /** Quit captures the current state without holding any Player across a save callback. */
+    public void retainPlayerDataForReconnect(Profile profile) {
+        PlayerData current = playerDataMap.remove(profile);
+        if (current != null) reconnectData.put(profile.getProfileUUID(), current.copyFor(
+                org.betonquest.betonquest.utils.PlayerConverter.getID(org.bukkit.Bukkit.getOfflinePlayer(profile.getPlayerUUID()))));
+        if (reconnectData.size() > 4096) reconnectData.keySet().removeIf(id -> !getSaver().hasPending(id.toString()));
+    }
 
     /**
      * Stores Conditions, Events, Objectives, Variables, Conversations and Cancelers.
@@ -848,6 +865,7 @@ public class BetonQuest extends JavaPlugin {
      */
     public void removePlayerData(final Profile profile) {
         playerDataMap.remove(profile);
+        reconnectData.remove(profile.getProfileUUID());
     }
 
     /**

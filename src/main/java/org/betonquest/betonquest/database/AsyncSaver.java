@@ -24,6 +24,10 @@ public class AsyncSaver extends Thread implements Saver {
     // Only the saver thread accesses this ordered backlog. A failed write is never discarded on retry.
     private final List<Write> pending = new ArrayList<>();
     private volatile Write active;
+    private final java.util.concurrent.ConcurrentHashMap<String, Write> latest = new java.util.concurrent.ConcurrentHashMap<>();
+    private volatile Set<String> failedOwners = Set.of();
+    private long retryAt;
+    private int recoveryAttempts;
     private volatile boolean running = true;
 
     public AsyncSaver(final BetonQuestLogger log) {
@@ -47,12 +51,20 @@ public class AsyncSaver extends Thread implements Saver {
         if (records.isEmpty()) throw new IllegalArgumentException("Empty database write");
         final Set<String> owners = new HashSet<>();
         records.forEach(record -> owners.addAll(owners(record)));
-        return enqueue(new Write(UUID.randomUUID().toString(), Set.copyOf(owners), List.copyOf(records), new CompletableFuture<>()));
+        final String key = currentKey(records);
+        final Write write = new Write(UUID.randomUUID().toString(), Set.copyOf(owners), normalize(records), new CompletableFuture<>(), key);
+        if (key != null) {
+            Write previous = latest.put(key, write);
+            if (previous != null && queue.remove(previous)) write.completion().whenComplete((ignored, failure) -> {
+                if (failure == null) previous.completion().complete(null); else previous.completion().completeExceptionally(failure);
+            });
+        }
+        return enqueue(write);
     }
 
     @Override
     public synchronized CompletableFuture<Void> checkpoint(final String profileID) {
-        return enqueue(new Write("", Set.of(profileID), List.of(), new CompletableFuture<>()));
+        return enqueue(new Write("", Set.of(profileID), List.of(), new CompletableFuture<>(), null));
     }
 
     private CompletableFuture<Void> enqueue(final Write write) {
@@ -66,16 +78,29 @@ public class AsyncSaver extends Thread implements Saver {
         while (running || !queue.isEmpty()) {
             try {
                 final Write write = queue.poll(100, TimeUnit.MILLISECONDS);
-                if (write == null) continue;
+                if (write == null) {
+                    if (!pending.isEmpty() && System.nanoTime() >= retryAt) {
+                        Throwable failure = recover(Set.of("*"));
+                        recoveryAttempts = failure == null ? 0 : recoveryAttempts + 1;
+                        retryAt = System.nanoTime() + TimeUnit.SECONDS.toNanos(new long[]{1,5,30}[Math.min(Math.max(0,recoveryAttempts-1),2)]);
+                    }
+                    continue;
+                }
+                if (superseded(write)) { finishFromLatest(write); continue; }
                 active = write;
+                pending.removeIf(previous -> previous.key() != null && previous.key().equals(write.key()));
+                refreshFailedOwners();
                 Throwable failure = recover(write.owners());
                 if (failure == null) failure = commit(write);
                 if (failure == null) {
+                    if (write.key() != null) latest.remove(write.key(), write);
                     write.completion().complete(null);
                 } else {
-                    if (!write.records().isEmpty()) pending.add(write);
+                    if (!write.records().isEmpty() && !superseded(write)) pending.add(write);
+                    refreshFailedOwners();
+                    retryAt = System.nanoTime() + TimeUnit.SECONDS.toNanos(1);
                     write.completion().completeExceptionally(failure);
-                    log.error("Content save not confirmed for " + write.owners() + "; retained for the next write or checkpoint.", failure);
+                    log.error("Content save not confirmed for " + write.owners() + "; latest state retained for background retry.", failure);
                 }
                 active = null;
             } catch (InterruptedException interrupted) {
@@ -100,13 +125,79 @@ public class AsyncSaver extends Thread implements Saver {
         final var iterator = pending.iterator();
         while (iterator.hasNext()) {
             final Write write = iterator.next();
+            if (superseded(write)) { iterator.remove(); continue; }
             if (!overlaps(needed, write.owners())) continue;
             if (overlaps(blocked, write.owners())) { blocked.addAll(write.owners()); continue; }
             final Throwable error = commit(write);
-            if (error == null) iterator.remove();
+            if (error == null) { iterator.remove(); if (write.key() != null) latest.remove(write.key(),write); }
             else { blocked.addAll(write.owners()); failure = error; }
         }
+        refreshFailedOwners();
         return failure;
+    }
+
+    private void refreshFailedOwners() {
+        Set<String> owners = new HashSet<>(); pending.forEach(write -> owners.addAll(write.owners())); failedOwners = Set.copyOf(owners);
+    }
+
+    /** Login may reuse a loaded current snapshot while its save is pending; this query performs no I/O. */
+    public boolean hasPending(String profile) {
+        Write current = active;
+        return failedOwners.contains(profile) || failedOwners.contains("*") || current != null && overlaps(current.owners(),Set.of(profile))
+                || queue.stream().anyMatch(write -> overlaps(write.owners(),Set.of(profile)));
+    }
+
+    private boolean superseded(Write write) { return write.key() != null && latest.get(write.key()) != write; }
+    private void finishFromLatest(Write write) {
+        Write current = latest.get(write.key());
+        if(current == null) write.completion().complete(null);
+        else current.completion().whenComplete((ignored,failure) -> { if(failure == null)write.completion().complete(null);else write.completion().completeExceptionally(failure); });
+    }
+
+    /** Coalesce only complete replacements of the same real object. Administrative mixed-owner batches keep order. */
+    private static String currentKey(List<Record> records) {
+        Record first=records.get(0); String[] args=first.args();
+        String family=switch(first.type()) {
+            case ADD_POINTS,REMOVE_POINTS -> "points";
+            case ADD_TAGS,REMOVE_TAGS -> "tags";
+            case ADD_OBJECTIVES,REMOVE_OBJECTIVES -> "objectives";
+            case ADD_GLOBAL_POINTS,REMOVE_GLOBAL_POINTS -> "global-points";
+            case ADD_GLOBAL_TAGS,REMOVE_GLOBAL_TAGS -> "global-tags";
+            case DELETE_BACKPACK -> "backpack";
+            case UPDATE_CONVERSATION -> "conversation";
+            case UPDATE_PLAYER_LANGUAGE -> "language";
+            case UPDATE_PROFILE_NAME -> "profile-name";
+            default -> null;
+        };
+        if(family == null)return null;
+        if(family.equals("backpack")) {
+            return records.stream().allMatch(record -> record.type()==UpdateType.DELETE_BACKPACK || record.type()==UpdateType.ADD_BACKPACK)
+                    && records.stream().allMatch(record -> record.args()[0].equals(args[0])) ? family+":"+args[0] : null;
+        }
+        if(family.equals("conversation")||family.equals("language")||family.equals("profile-name"))return records.size()==1 ? family+":"+args[1] : null;
+        boolean global=family.startsWith("global");
+        String owner=global?"global":args[0], object=global?args[0]:args[1];
+        for(Record record:records) {
+            String[] values=record.args();
+            if(global ? !values[0].equals(object) : !values[0].equals(owner)||values.length<2||!values[1].equals(object)) return null;
+            if(!record.type().name().endsWith(first.type().name().substring(first.type().name().indexOf('_')+1)))return null;
+        }
+        return family+":"+owner+":"+object;
+    }
+
+    private static List<Record> normalize(List<Record> records) {
+        Record first=records.get(0);
+        UpdateType remove=switch(first.type()) {
+            case ADD_POINTS -> UpdateType.REMOVE_POINTS;
+            case ADD_TAGS -> UpdateType.REMOVE_TAGS;
+            case ADD_OBJECTIVES -> UpdateType.REMOVE_OBJECTIVES;
+            case ADD_GLOBAL_POINTS -> UpdateType.REMOVE_GLOBAL_POINTS;
+            case ADD_GLOBAL_TAGS -> UpdateType.REMOVE_GLOBAL_TAGS;
+            default -> null;
+        };
+        if(records.size()!=1 || remove==null)return List.copyOf(records);
+        String[] args=first.args();
+        return List.of(new Record(remove, java.util.Arrays.copyOf(args,remove==UpdateType.REMOVE_GLOBAL_TAGS||remove==UpdateType.REMOVE_GLOBAL_POINTS?1:2)),first);
     }
 
     private Throwable commit(final Write write) {
@@ -180,5 +271,5 @@ public class AsyncSaver extends Thread implements Saver {
         };
     }
 
-    private record Write(String id, Set<String> owners, List<Record> records, CompletableFuture<Void> completion) { }
+    private record Write(String id, Set<String> owners, List<Record> records, CompletableFuture<Void> completion, String key) { }
 }
