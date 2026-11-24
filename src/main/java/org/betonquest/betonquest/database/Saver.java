@@ -19,6 +19,9 @@ public interface Saver {
     /** Saves one logical replacement atomically, rather than separate delete and insert operations. */
     CompletableFuture<Void> save(List<Record> records);
 
+    /** Memory-only dirty state query for reconnects. */
+    default boolean hasPending(String profileID) { return false; }
+
     /** Retries retained writes and confirms preceding changes for a profile; queueing is not durable success. */
     CompletableFuture<Void> checkpoint(String profileID);
 

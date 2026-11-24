@@ -36,6 +36,8 @@ public class JoinQuitListener implements Listener {
      * Stores the {@link PlayerData}.
      */
     private final BetonQuest betonQuest;
+    private final java.util.concurrent.atomic.AtomicLong loginSequence = new java.util.concurrent.atomic.AtomicLong();
+    private final java.util.concurrent.ConcurrentHashMap<java.util.UUID, Long> logins = new java.util.concurrent.ConcurrentHashMap<>();
 
     /**
      * Creates new listener, which will handle the data loading/saving.
@@ -53,23 +55,29 @@ public class JoinQuitListener implements Listener {
         if (event.getLoginResult() != Result.ALLOWED) {
             return;
         }
+        long attempt = loginSequence.incrementAndGet();
+        synchronized (logins) { logins.put(event.getUniqueId(),attempt); }
         try {
-            // A quick reconnect must not load an older profile while its logout writes are still queued.
-            betonQuest.getSaver().checkpoint(event.getUniqueId().toString()).get(5, TimeUnit.SECONDS);
             final Profile profile = PlayerConverter.getID(Bukkit.getOfflinePlayer(event.getUniqueId()));
-            betonQuest.getSaver().checkpoint(profile.getProfileUUID().toString()).get(5, TimeUnit.SECONDS);
-            betonQuest.putPlayerData(profile, new PlayerData(profile));
+            final PlayerData loaded = betonQuest.loadPlayerDataForLogin(profile);
+            synchronized (logins) {
+                if (!java.util.Objects.equals(logins.get(event.getUniqueId()),attempt)) throw new IllegalStateException("Quest login session changed");
+                betonQuest.putPlayerData(profile, loaded);
+            }
         } catch (final Exception failure) {
             if (failure instanceof InterruptedException) Thread.currentThread().interrupt();
-            loggerFactory.create(JoinQuitListener.class).error("Could not confirm quest data before login for " + event.getUniqueId(), failure);
-            event.disallow(Result.KICK_OTHER, "任务数据暂时无法确认，请稍后重新连接。");
+            loggerFactory.create(JoinQuitListener.class).error("Could not load quest data before login for " + event.getUniqueId(), failure);
+            event.disallow(Result.KICK_OTHER, "任务数据暂时无法加载，请稍后重新连接。");
         }
     }
 
     @EventHandler(ignoreCancelled = true)
     public void onPlayerJoin(final PlayerJoinEvent event) {
         final OnlineProfile onlineProfile = PlayerConverter.getID(event.getPlayer());
-        final PlayerData playerData = betonQuest.getPlayerData(onlineProfile);
+        if (Bukkit.getPlayer(event.getPlayer().getUniqueId()) != event.getPlayer()) return;
+        final PlayerData playerData = betonQuest.getPlayerData(onlineProfile).copyFor(onlineProfile);
+        betonQuest.putPlayerData(onlineProfile,playerData);
+        logins.remove(event.getPlayer().getUniqueId());
         playerData.startObjectives();
         GlobalObjectives.startAll(onlineProfile);
         checkResourcepack(event, onlineProfile);
@@ -97,10 +105,13 @@ public class JoinQuitListener implements Listener {
 
     @EventHandler
     public void onPlayerQuit(final PlayerQuitEvent event) {
+        if (Bukkit.getPlayer(event.getPlayer().getUniqueId()) != event.getPlayer()) return;
         final OnlineProfile onlineProfile = PlayerConverter.getID(event.getPlayer());
         for (final Objective objective : betonQuest.getPlayerObjectives(onlineProfile)) {
             objective.pauseObjectiveForPlayer(onlineProfile);
         }
-        betonQuest.removePlayerData(onlineProfile);
+        if (Bukkit.getPlayer(event.getPlayer().getUniqueId()) == event.getPlayer()) {
+            betonQuest.retainPlayerDataForReconnect(onlineProfile);
+        }
     }
 }

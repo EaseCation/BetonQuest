@@ -173,6 +173,36 @@ public final class RewardJournal {
         }
     }
 
+    /** Initial qualification read includes only actual completed claims; old pending operations are not replayed. */
+    public List<Entry> loadCompleted(UUID player) throws SQLException {
+        try (Connection connection = connections.open(); PreparedStatement select = connection.prepareStatement(
+                "SELECT player_id,profile_id,reward_key,'' AS definition,inventory_token,stage,revision,created_at,updated_at FROM " + table + " WHERE player_id=? AND stage=?")) {
+            select.setString(1, player.toString()); select.setString(2, Stage.COMPLETED.name());
+            try (ResultSet result = select.executeQuery()) {
+                List<Entry> rows = new ArrayList<>(); while (result.next()) rows.add(read(result)); return List.copyOf(rows);
+            }
+        }
+    }
+
+    /** Saves the current completed-claim state after gameplay; it never grants or compensates assets. */
+    public void saveCompleted(Entry entry) throws SQLException {
+        if (entry.stage() != Stage.COMPLETED) throw new IllegalArgumentException("Expected completed claim state");
+        try (Connection connection = connections.open(); PreparedStatement update = connection.prepareStatement(
+                "UPDATE " + table + " SET profile_id=?,definition=?,inventory_token=?,stage=?,revision=revision+1,updated_at=? WHERE player_id=? AND reward_key=?")) {
+            update.setString(1, entry.profileId().toString()); update.setString(2, entry.definition());
+            update.setString(3, entry.inventoryToken().toString()); update.setString(4, Stage.COMPLETED.name());
+            update.setLong(5, entry.updatedAt()); update.setString(6, entry.playerId().toString()); update.setString(7, entry.key());
+            if (update.executeUpdate() != 0) return;
+            try (PreparedStatement insert = connection.prepareStatement("INSERT INTO " + table
+                    + " (player_id,reward_key,profile_id,definition,inventory_token,stage,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)")) {
+                insert.setString(1, entry.playerId().toString()); insert.setString(2, entry.key());
+                insert.setString(3, entry.profileId().toString()); insert.setString(4, entry.definition());
+                insert.setString(5, entry.inventoryToken().toString()); insert.setString(6, Stage.COMPLETED.name());
+                insert.setLong(7, entry.revision()); insert.setLong(8, entry.createdAt()); insert.setLong(9, entry.updatedAt()); insert.executeUpdate();
+            }
+        }
+    }
+
     private Entry find(final Connection connection, final UUID player, final String key) throws SQLException {
         try (PreparedStatement select = connection.prepareStatement("SELECT * FROM " + table + " WHERE player_id = ? AND reward_key = ?")) {
             select.setString(1, player.toString());

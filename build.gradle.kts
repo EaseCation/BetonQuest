@@ -57,6 +57,10 @@ repositories {
 }
 
 dependencies {
+    // The Java-only optional observer boundary is built from the current owned source.
+    // Keep the existing BQ substitutions disabled to avoid the MMOCore/BQ/MMOItems cycle.
+    compileOnly(files(rootProject.file("../PlayerObserverPlatform/observer-api/build/libs/observer-api-0.1.0-SNAPSHOT.jar"))
+        .builtBy(gradle.includedBuild("PlayerObserverPlatform").task(":observer-api:jar")))
     // Compile-time annotations (from parent POM)
     compileOnly("org.jetbrains:annotations:26.1.0")
     compileOnly("com.github.spotbugs:spotbugs-annotations:4.9.8")
