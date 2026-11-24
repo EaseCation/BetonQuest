@@ -1,10 +1,12 @@
 plugins {
     java
     id("com.gradleup.shadow") version "9.0.0"
+    `maven-publish`
 }
 
-group = "org.betonquest"
-version = "2.2.1-SNAPSHOT"
+// EaseCation fork coordinates/versioning (upstream org.betonquest 2.2.1-SNAPSHOT), see GeyserWorkspace docs/maven-coordinates.md
+group = "net.easecation.fork.betonquest"
+version = "2.2.1-ec.1"
 description = "All Your Adventure Supplies"
 
 val betonquestVersion = "2.2.1-DEV-UNOFFICIAL"
@@ -34,6 +36,17 @@ configurations.all {
 }
 
 repositories {
+    // EaseCation private repository (Aliyun Yunxiao Packages), only for net.easecation.* coordinates.
+    // Credentials: yunxiaoMavenUsername / yunxiaoMavenPassword in ~/.gradle/gradle.properties.
+    exclusiveContent {
+        forRepository {
+            maven("https://easecation-cn-hangzhou.devops.aliyuncs.com/packages/api/protocol/maven/14075-release-h64s7e") {
+                name = "yunxiaoMaven"
+                credentials(PasswordCredentials::class)
+            }
+        }
+        filter { includeGroupByRegex("net\\.easecation(\\..*)?") }
+    }
     mavenCentral()
     maven("https://repo.papermc.io/repository/maven-public/")
     maven("https://maven.enginehub.org/repo/")
@@ -51,16 +64,16 @@ repositories {
     maven("https://oss.sonatype.org/content/repositories/snapshots/")
     maven("https://ci.mg-dev.eu/plugin/repository/everything")
     maven("https://libraries.minecraft.net/")
-    maven("https://nexus.betonquest.org/repository/betonquest/")
+    // nexus.betonquest.org is gone (no response); a dead repository fails resolution instead of falling through.
+    // libby (transitive via Citizens) used to come through that nexus.
+    maven("https://repo.alessiodp.com/releases/") { content { includeGroup("net.byteflux") } }
     maven("https://repo.betonquest.org/betonquest/")
-    mavenLocal()
 }
 
 dependencies {
-    // The Java-only optional observer boundary is built from the current owned source.
+    // The Java-only optional observer boundary, published from PlayerObserverPlatform.
     // Keep the existing BQ substitutions disabled to avoid the MMOCore/BQ/MMOItems cycle.
-    compileOnly(files(rootProject.file("../PlayerObserverPlatform/observer-api/build/libs/observer-api-0.1.0-SNAPSHOT.jar"))
-        .builtBy(gradle.includedBuild("PlayerObserverPlatform").task(":observer-api:jar")))
+    compileOnly("net.easecation.playerobserver:observer-api:0.1.1")
     // Compile-time annotations (from parent POM)
     compileOnly("org.jetbrains:annotations:26.1.0")
     compileOnly("com.github.spotbugs:spotbugs-annotations:4.9.8")
@@ -123,7 +136,8 @@ dependencies {
 
     // Bundled / relocated (matches maven-shade-plugin includes)
     implementation("org.bstats:bstats-bukkit:3.0.2")
-    implementation("com.comphenix.packetwrapper:PacketWrapper:1.13-R0.1-SNAPSHOT")
+    // PacketWrapper removed: its users are excluded below and the only available artifact was an empty
+    // placeholder jar installed into one machine's ~/.m2.
     implementation("net.kyori:adventure-api:4.17.0")
     implementation("net.kyori:adventure-platform-bukkit:4.3.3")
     implementation("net.kyori:adventure-text-serializer-plain:4.17.0")
@@ -216,7 +230,6 @@ tasks.shadowJar {
         include(dependency("commons-io:.*"))
         include(dependency("org.json:.*"))
         include(dependency("net.kyori:.*"))
-        include(dependency("com.comphenix.packetwrapper:.*"))
         include(dependency("io.papermc:paperlib"))
         include(dependency("com.cronutils:cron-utils"))
         include(dependency("com.zaxxer:HikariCP"))
@@ -241,7 +254,6 @@ tasks.shadowJar {
     relocate("com.google.common", "$relocatePrefix.com.google.common")
     relocate("org.json", "$relocatePrefix.org.json")
     relocate("net.kyori", "$relocatePrefix.net.kyori")
-    relocate("com.comphenix.packetwrapper", "$relocatePrefix.com.comphenix.packetwrapper")
     relocate("io.papermc.lib", "$relocatePrefix.io.papermc.lib")
     relocate("com.cronutils", "$relocatePrefix.com.cronutils")
     relocate("com.zaxxer.hikari", "$relocatePrefix.com.zaxxer.hikari")
@@ -276,4 +288,31 @@ tasks.build {
 // Default assemble should produce the deployable shaded jar
 tasks.assemble {
     dependsOn(tasks.shadowJar)
+}
+
+// Published for MMOCore (compileOnly). artifactId = project name "BetonQuest".
+publishing {
+    publications {
+        create<MavenPublication>("maven") {
+            from(components["java"])
+            pom {
+                description.set("EaseCation fork of BetonQuest")
+                properties.set(mapOf("upstream.groupId" to "org.betonquest", "upstream.version" to "2.2.1-SNAPSHOT"))
+            }
+        }
+    }
+    repositories {
+        // EaseCation private repository (Aliyun Yunxiao Packages).
+        // Credentials: yunxiaoMavenUsername / yunxiaoMavenPassword in ~/.gradle/gradle.properties.
+        maven {
+            name = "yunxiaoMaven"
+            url = uri(
+                if (version.toString().endsWith("-SNAPSHOT"))
+                    "https://easecation-cn-hangzhou.devops.aliyuncs.com/packages/api/protocol/maven/14075-snapshot-bjmmxv"
+                else
+                    "https://easecation-cn-hangzhou.devops.aliyuncs.com/packages/api/protocol/maven/14075-release-h64s7e"
+            )
+            credentials(PasswordCredentials::class)
+        }
+    }
 }
