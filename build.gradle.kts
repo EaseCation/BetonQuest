@@ -6,7 +6,7 @@ plugins {
 
 // EaseCation fork coordinates/versioning (upstream org.betonquest 2.2.1-SNAPSHOT), see GeyserWorkspace docs/maven-coordinates.md
 group = "net.easecation.fork.betonquest"
-version = "2.2.1-ec.1"
+version = "2.2.1-SNAPSHOT"
 description = "All Your Adventure Supplies"
 
 val betonquestVersion = "2.2.1-DEV-UNOFFICIAL"
@@ -290,10 +290,14 @@ tasks.assemble {
     dependsOn(tasks.shadowJar)
 }
 
+// Runtime version (plugin.yml, jar name) stays as deployed on the servers; the EaseCation repository gets this release.
+val publishVersion = "2.2.1-ec.1"
+
 // Published for MMOCore (compileOnly). artifactId = project name "BetonQuest".
 publishing {
     publications {
         create<MavenPublication>("maven") {
+            version = publishVersion
             from(components["java"])
             pom {
                 description.set("EaseCation fork of BetonQuest")
@@ -307,7 +311,7 @@ publishing {
         maven {
             name = "yunxiaoMaven"
             url = uri(
-                if (version.toString().endsWith("-SNAPSHOT"))
+                if (publishVersion.endsWith("-SNAPSHOT"))
                     "https://easecation-cn-hangzhou.devops.aliyuncs.com/packages/api/protocol/maven/14075-snapshot-bjmmxv"
                 else
                     "https://easecation-cn-hangzhou.devops.aliyuncs.com/packages/api/protocol/maven/14075-release-h64s7e"
