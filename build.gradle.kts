@@ -192,7 +192,9 @@ tasks.processResources {
     val expandProps = mapOf(
         "project" to mapOf(
             "name" to pluginDisplayName,
-            "groupId" to project.group.toString(),
+            // Java package root of the main class (plugin.yml main = groupId.artifactId.name). Not project.group, which is
+            // the EaseCation fork's Maven group.
+            "groupId" to "org.betonquest",
             "artifactId" to "betonquest",
             "description" to project.description.orEmpty(),
             "organization" to mapOf(
